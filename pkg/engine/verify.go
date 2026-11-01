@@ -22,7 +22,7 @@ type Report struct {
 
 // Verify runs the post-cutover checks. It is also usable standalone (CLI `verify`).
 // rc may be nil when files are not migrated.
-func Verify(ctx context.Context, p *plan.Plan, src, dst *pg.DB, rc *files.Rclone) (*Report, error) {
+func Verify(ctx context.Context, p *plan.Plan, src, dst *pg.DB, rc FileSyncer) (*Report, error) {
 	rep := &Report{}
 	tables, err := verify.ListTables(ctx, src.Pool, p.Verify.Schemas, p.Verify.Tables)
 	if err != nil {

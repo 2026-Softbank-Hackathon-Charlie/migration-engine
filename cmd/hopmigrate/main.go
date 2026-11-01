@@ -208,7 +208,7 @@ func cmdVerify(ctx context.Context, args []string) error {
 		return fmt.Errorf("target: %w", err)
 	}
 	defer dst.Close()
-	var rc *files.Rclone
+	var rc engine.FileSyncer
 	if p.Files != nil {
 		rc = files.New(p.Files.Rclone, p.Files.Flags)
 	}

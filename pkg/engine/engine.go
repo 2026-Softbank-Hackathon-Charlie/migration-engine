@@ -21,7 +21,6 @@ import (
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/files"
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/gateway"
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/kube"
-	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/pg"
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/plan"
 )
 
@@ -74,6 +73,15 @@ type Options struct {
 	Emit func(Event)
 	// Gateway overrides the gateway built from the plan (tests, embedding).
 	Gateway gateway.Gateway
+
+	// The fields below replace production adapters (tests, embedding).
+	// Nil means: build from the plan.
+	SourceCluster, TargetCluster Cluster
+	Connect                      Connector
+	Files                        FileSyncer
+	Verifier                     Verifier
+	// PollInterval is the base polling period (default 2s). Shorter waits scale from it.
+	PollInterval time.Duration
 }
 
 // Engine runs one migration.
@@ -84,10 +92,13 @@ type Engine struct {
 	emitFn    func(Event)
 	mu        sync.Mutex
 
-	src, dst     *cnpg.Client
-	srcDB, dstDB *pg.DB
+	src, dst     Cluster
+	srcDB, dstDB Database
+	connect      Connector
 	gw           gateway.Gateway
-	rclone       *files.Rclone
+	rclone       FileSyncer // nil when the plan has no files
+	verifier     Verifier
+	poll         time.Duration
 }
 
 // New builds an Engine, creating or resuming run state. Database connections are opened lazily.
@@ -95,7 +106,49 @@ func New(p *plan.Plan, opt Options) (*Engine, error) {
 	if opt.StateDir == "" {
 		opt.StateDir = filepath.Join(".hopcharlie", "runs")
 	}
-	e := &Engine{plan: p, emitFn: opt.Emit}
+	e := &Engine{plan: p, emitFn: opt.Emit, connect: opt.Connect, poll: opt.PollInterval}
+	if e.connect == nil {
+		e.connect = connectPG
+	}
+	if e.poll <= 0 {
+		e.poll = 2 * time.Second
+	}
+
+	// Adapters first, so a bad kubeconfig does not leave an orphan state file.
+	e.src, e.dst = opt.SourceCluster, opt.TargetCluster
+	if e.src == nil {
+		dyn, err := kube.Dynamic(p.Source.Kubeconfig, p.Source.Context)
+		if err != nil {
+			return nil, fmt.Errorf("source: %w", err)
+		}
+		e.src = cnpg.New(dyn, p.Source.Namespace, p.Source.Cluster)
+	}
+	if e.dst == nil {
+		dyn, err := kube.Dynamic(p.Target.Kubeconfig, p.Target.Context)
+		if err != nil {
+			return nil, fmt.Errorf("target: %w", err)
+		}
+		e.dst = cnpg.New(dyn, p.Target.Namespace, p.Target.Cluster)
+	}
+	switch {
+	case opt.Gateway != nil:
+		e.gw = opt.Gateway
+	case p.Gateway.Mode == "http":
+		e.gw = gateway.NewHTTP(p.Gateway.URL, p.Gateway.Token)
+	default:
+		e.gw = gateway.None{}
+	}
+	if p.Files != nil {
+		if opt.Files != nil {
+			e.rclone = opt.Files
+		} else {
+			e.rclone = files.New(p.Files.Rclone, p.Files.Flags)
+		}
+	}
+	e.verifier = opt.Verifier
+	if e.verifier == nil {
+		e.verifier = sqlVerifier{plan: p, rc: e.rclone}
+	}
 
 	runID := opt.RunID
 	if runID == "" {
@@ -120,29 +173,6 @@ func New(p *plan.Plan, opt Options) (*Engine, error) {
 	default:
 		return nil, err
 	}
-
-	srcDyn, err := kube.Dynamic(p.Source.Kubeconfig, p.Source.Context)
-	if err != nil {
-		return nil, fmt.Errorf("source: %w", err)
-	}
-	dstDyn, err := kube.Dynamic(p.Target.Kubeconfig, p.Target.Context)
-	if err != nil {
-		return nil, fmt.Errorf("target: %w", err)
-	}
-	e.src = cnpg.New(srcDyn, p.Source.Namespace, p.Source.Cluster)
-	e.dst = cnpg.New(dstDyn, p.Target.Namespace, p.Target.Cluster)
-
-	switch {
-	case opt.Gateway != nil:
-		e.gw = opt.Gateway
-	case p.Gateway.Mode == "http":
-		e.gw = gateway.NewHTTP(p.Gateway.URL, p.Gateway.Token)
-	default:
-		e.gw = gateway.None{}
-	}
-	if p.Files != nil {
-		e.rclone = files.New(p.Files.Rclone, p.Files.Flags)
-	}
 	return e, nil
 }
 
@@ -161,8 +191,12 @@ func (e *Engine) State() State {
 
 // Close releases database connections.
 func (e *Engine) Close() {
-	e.srcDB.Close()
-	e.dstDB.Close()
+	if e.srcDB != nil {
+		e.srcDB.Close()
+	}
+	if e.dstDB != nil {
+		e.dstDB.Close()
+	}
 }
 
 // Run executes every remaining step. Succeeded steps from a previous attempt are skipped.

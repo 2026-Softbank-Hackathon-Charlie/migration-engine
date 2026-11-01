@@ -8,11 +8,8 @@ import (
 	"time"
 
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/cnpg"
-	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/pg"
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/verify"
 )
-
-const pollInterval = 2 * time.Second
 
 // precheck: both sides reachable, source is a healthy writable primary, the
 // distributed topology is wired both ways, and the tools are available.
@@ -102,7 +99,7 @@ func (e *Engine) prepare(ctx context.Context) (map[string]any, error) {
 
 	wctx, cancel := context.WithTimeout(ctx, e.plan.Thresholds.CatchupTimeout.Duration)
 	defer cancel()
-	d, err := e.dst.WaitFor(wctx, pollInterval, (*cnpg.Status).Healthy)
+	d, err := e.dst.WaitFor(wctx, e.poll, (*cnpg.Status).Healthy)
 	if err != nil {
 		return ev, fmt.Errorf("target cluster not healthy: %w", err)
 	}
@@ -220,11 +217,10 @@ func (e *Engine) switchover(ctx context.Context) (map[string]any, error) {
 	// 2. Gate: both sides frozen at the same point must be identical.
 	if *e.plan.Verify.FenceGate {
 		start := time.Now()
-		tables, err := verify.ListTables(tctx, e.srcDB.Pool, e.plan.Verify.Schemas, e.plan.Verify.Tables)
+		results, ok, err := e.verifier.FenceGate(tctx, e.srcDB, e.dstDB)
 		if err != nil {
-			return ev, fmt.Errorf("list tables: %w", err)
+			return ev, fmt.Errorf("fence gate: %w", err)
 		}
-		results, ok := verify.CompareTables(tctx, e.srcDB.Pool, e.dstDB.Pool, tables)
 		ev["fenceGate"] = map[string]any{"tables": results, "ok": ok, "durationMillis": time.Since(start).Milliseconds()}
 		if !ok {
 			return ev, fmt.Errorf("fence gate: data mismatch in %s", mismatched(results))
@@ -246,7 +242,7 @@ func (e *Engine) switchover(ctx context.Context) (map[string]any, error) {
 		return ev, fmt.Errorf("demote source: %w", err)
 	}
 	e.log(StepSwitchover, "source demotion requested", map[string]any{"newPrimary": dstS.Self})
-	demoted, err := e.src.WaitFor(tctx, time.Second, func(s *cnpg.Status) bool { return s.DemotionToken != "" })
+	demoted, err := e.src.WaitFor(tctx, e.poll/2, func(s *cnpg.Status) bool { return s.DemotionToken != "" })
 	if err != nil {
 		return ev, fmt.Errorf("waiting for demotion token: %w", err)
 	}
@@ -306,11 +302,11 @@ func (e *Engine) verify(ctx context.Context) (map[string]any, error) {
 	if err != nil {
 		return ev, err
 	}
-	rep, err := Verify(ctx, e.plan, src, dst, e.rclone)
-	ev["report"] = rep
+	rep, err := e.verifier.Report(ctx, src, dst)
 	if err != nil {
 		return ev, err
 	}
+	ev["report"] = rep
 	if !rep.OK {
 		return ev, fmt.Errorf("verification failed: %s", strings.Join(rep.Problems, "; "))
 	}
@@ -339,9 +335,9 @@ func (e *Engine) finalize(ctx context.Context) (map[string]any, error) {
 
 // --- helpers ---
 
-func (e *Engine) sourceDB(ctx context.Context) (*pg.DB, error) {
+func (e *Engine) sourceDB(ctx context.Context) (Database, error) {
 	if e.srcDB == nil {
-		db, err := pg.Connect(ctx, e.plan.Source.DSN)
+		db, err := e.connect(ctx, e.plan.Source.DSN)
 		if err != nil {
 			return nil, err
 		}
@@ -350,9 +346,9 @@ func (e *Engine) sourceDB(ctx context.Context) (*pg.DB, error) {
 	return e.srcDB, nil
 }
 
-func (e *Engine) targetDB(ctx context.Context) (*pg.DB, error) {
+func (e *Engine) targetDB(ctx context.Context) (Database, error) {
 	if e.dstDB == nil {
-		db, err := pg.Connect(ctx, e.plan.Target.DSN)
+		db, err := e.connect(ctx, e.plan.Target.DSN)
 		if err != nil {
 			return nil, err
 		}
@@ -361,7 +357,7 @@ func (e *Engine) targetDB(ctx context.Context) (*pg.DB, error) {
 	return e.dstDB, nil
 }
 
-func (e *Engine) selfName(ctx context.Context, c *cnpg.Client) (string, error) {
+func (e *Engine) selfName(ctx context.Context, c Cluster) (string, error) {
 	s, err := c.Get(ctx)
 	if err != nil {
 		return "", err
@@ -384,7 +380,7 @@ func (e *Engine) waitCaughtUp(ctx context.Context, step string, timeout time.Dur
 	var last int64 = -1
 	var lastErr error
 	for {
-		lag, sl, dl, err := pg.Lag(ctx, src, dst)
+		lag, sl, dl, err := measureLag(ctx, src, dst)
 		if err == nil {
 			last = lag
 			e.emit(step, EventMetric, "replication lag", map[string]any{"lagBytes": lag, "sourceLsn": sl, "targetLsn": dl})
@@ -398,7 +394,7 @@ func (e *Engine) waitCaughtUp(ctx context.Context, step string, timeout time.Dur
 		select {
 		case <-ctx.Done():
 			return last, fmt.Errorf("lag %d > %d bytes after %s (last error: %v)", last, e.plan.Thresholds.MaxLagBytes, timeout, lastErr)
-		case <-time.After(pollInterval):
+		case <-time.After(e.poll):
 		}
 	}
 }
@@ -420,17 +416,17 @@ func (e *Engine) waitReplayed(ctx context.Context, lsn string) (string, error) {
 		select {
 		case <-ctx.Done():
 			return pos, ctx.Err()
-		case <-time.After(250 * time.Millisecond):
+		case <-time.After(e.poll / 8):
 		}
 	}
 }
 
 // waitWritable polls until the database at dsn is out of recovery,
 // reconnecting as needed (pods may restart during promotion).
-func (e *Engine) waitWritable(ctx context.Context, dsn string, slot **pg.DB) error {
+func (e *Engine) waitWritable(ctx context.Context, dsn string, slot *Database) error {
 	for {
 		if *slot == nil {
-			if db, err := pg.Connect(ctx, dsn); err == nil {
+			if db, err := e.connect(ctx, dsn); err == nil {
 				*slot = db
 			}
 		}
@@ -447,7 +443,7 @@ func (e *Engine) waitWritable(ctx context.Context, dsn string, slot **pg.DB) err
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(500 * time.Millisecond):
+		case <-time.After(e.poll / 4):
 		}
 	}
 }

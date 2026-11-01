@@ -1,0 +1,6 @@
+/hopmigrate
+/hopmigrate.exe
+/bin/
+.hopcharlie/
+k6/written.jsonl
+*.local.json

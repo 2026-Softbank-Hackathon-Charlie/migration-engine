@@ -1,0 +1,39 @@
+# Target (replica) in the CNPG distributed topology.
+# Bootstraps from the source with pg_basebackup, then streams from it.
+# The engine promotes it by setting replica.primary=shop-db-eks + promotionToken.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: shop-db-eks
+  namespace: shop
+spec:
+  instances: 2
+  storage:
+    size: 10Gi
+    storageClass: gp3   # EKS needs the EBS CSI driver
+  bootstrap:
+    pg_basebackup:
+      source: shop-db-gke
+  replica:
+    self: shop-db-eks
+    primary: shop-db-gke
+    source: shop-db-gke
+  externalClusters:
+    - name: shop-db-gke
+      connectionParameters:
+        host: shop-db-gke-rw.shop.gke.ts.net
+        user: streaming_replica
+        dbname: postgres
+        sslmode: verify-full
+      sslKey: { name: shop-db-gke-replication, key: tls.key }
+      sslCert: { name: shop-db-gke-replication, key: tls.crt }
+      sslRootCert: { name: shop-db-gke-ca, key: ca.crt }
+    - name: shop-db-eks
+      connectionParameters:
+        host: shop-db-eks-rw.shop.eks.ts.net
+        user: streaming_replica
+        dbname: postgres
+        sslmode: verify-full
+      sslKey: { name: shop-db-eks-replication, key: tls.key }
+      sslCert: { name: shop-db-eks-replication, key: tls.crt }
+      sslRootCert: { name: shop-db-eks-ca, key: ca.crt }

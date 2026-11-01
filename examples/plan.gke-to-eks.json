@@ -1,0 +1,41 @@
+{
+  "id": "shop-gke-to-eks",
+  "source": {
+    "env": "gke",
+    "context": "gke-hopcharlie",
+    "namespace": "shop",
+    "cluster": "shop-db-gke",
+    "dsn": "postgres://app:${SRC_PGPASSWORD}@shop-db-gke-rw.shop.gke.ts.net:5432/app?sslmode=require"
+  },
+  "target": {
+    "env": "eks",
+    "context": "eks-hopcharlie",
+    "namespace": "shop",
+    "cluster": "shop-db-eks",
+    "dsn": "postgres://app:${DST_PGPASSWORD}@shop-db-eks-rw.shop.eks.ts.net:5432/app?sslmode=require",
+    "manifest": "examples/cnpg/target-eks.yaml"
+  },
+  "files": {
+    "source": "gcs:shop-uploads-gke",
+    "target": "s3:shop-uploads-eks",
+    "flags": ["--checksum", "--transfers", "16"]
+  },
+  "gateway": {
+    "mode": "http",
+    "url": "http://gateway.hopcharlie.ts.net:9901",
+    "token": "${GATEWAY_TOKEN}",
+    "sourceBackend": "gke",
+    "targetBackend": "eks"
+  },
+  "verify": {
+    "schemas": ["public"],
+    "fenceGate": true,
+    "writtenRecords": "k6/written.jsonl"
+  },
+  "thresholds": {
+    "maxLagBytes": 16777216,
+    "catchupTimeout": "10m",
+    "switchoverTimeout": "2m",
+    "maxDowntime": "3m"
+  }
+}

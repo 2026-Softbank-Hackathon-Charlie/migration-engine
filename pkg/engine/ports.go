@@ -27,6 +27,7 @@ type Cluster interface {
 // Database is a connection to one PostgreSQL primary or standby (*pg.DB).
 type Database interface {
 	InRecovery(ctx context.Context) (bool, error)
+	PendingRestart(ctx context.Context) (bool, error)
 	WALPosition(ctx context.Context) (string, error)
 	LSNDiff(ctx context.Context, a, b string) (int64, error)
 	Close()

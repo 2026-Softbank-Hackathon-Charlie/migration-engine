@@ -4,6 +4,10 @@ kind: Cluster
 metadata: { name: pg-src, namespace: hop }
 spec:
   instances: 1
+  # CNPG restarts a newly promoted primary in place with a smart shutdown, which
+  # waits for every client session (app connection pools) up to this many seconds.
+  # The default 180 would keep the new primary down for minutes after a switchover.
+  smartShutdownTimeout: 5
   storage: { size: 1Gi }
   bootstrap:
     initdb: { database: app, owner: app }

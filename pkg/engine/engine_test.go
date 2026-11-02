@@ -398,3 +398,30 @@ func TestLagWaitTimesOut(t *testing.T) {
 		t.Error("no lag metrics emitted")
 	}
 }
+
+// CNPG restarts a new primary in place right after promotion (seen on a real
+// cluster under load). Writes must stay held until that restart is over, or
+// the released writes hit a primary that is shutting down.
+func TestWritesHeldUntilPromotedTargetSettles(t *testing.T) {
+	h := newHarness(t)
+	h.w.restartGets = 5
+	e := h.engine(t, "")
+	if err := e.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertOrder(t, h.w.Calls(), `dst.setPrimary db-eks token="tok-1000"`, "dst.restart done", "gw.route eks", "gw.release")
+}
+
+// The old source restarts as a replica after demotion. A connection error
+// while it does must not fail verification (which would halt the run).
+func TestVerifyWaitsForOldSourceRestart(t *testing.T) {
+	h := newHarness(t)
+	h.w.sourceDownCalls = 3
+	e := h.engine(t, "")
+	if err := e.Run(context.Background()); err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if got := e.State().Outcome; got != OutcomeSucceeded {
+		t.Fatalf("outcome %q, want succeeded", got)
+	}
+}

@@ -261,6 +261,12 @@ func (e *Engine) switchover(ctx context.Context) (map[string]any, error) {
 	if pos, err := e.dstDB.WALPosition(tctx); err == nil {
 		ev["targetLsnAfterPromotion"] = pos
 	}
+	// 5. Writes stay held until CNPG has finished with the new primary.
+	start := time.Now()
+	if err := e.waitSettled(tctx, e.dst, e.plan.Target.DSN, &e.dstDB); err != nil {
+		return ev, fmt.Errorf("target did not settle after promotion: %w", err)
+	}
+	ev["settleMillis"] = time.Since(start).Milliseconds()
 	return ev, nil
 }
 
@@ -295,6 +301,18 @@ func (e *Engine) cutover(ctx context.Context) (map[string]any, error) {
 // saw succeed exists, and every source object exists on the target.
 func (e *Engine) verify(ctx context.Context) (map[string]any, error) {
 	ev := map[string]any{}
+	// The old source restarts as a replica after demotion; a connection error
+	// while it does is not a verification result. Wait until both sides are up
+	// in their new roles.
+	wctx, cancel := context.WithTimeout(ctx, e.plan.Thresholds.CatchupTimeout.Duration)
+	err := e.waitRecovery(wctx, e.plan.Source.DSN, &e.srcDB, true)
+	if err == nil {
+		err = e.waitWritable(wctx, e.plan.Target.DSN, &e.dstDB)
+	}
+	cancel()
+	if err != nil {
+		return ev, fmt.Errorf("databases not reachable in their new roles: %w", err)
+	}
 	src, err := e.sourceDB(ctx)
 	if err != nil {
 		return ev, err
@@ -426,6 +444,48 @@ func (e *Engine) waitReplayed(ctx context.Context, lsn string) (string, error) {
 // this run's demotion, not one left over from an earlier demotion.
 func (e *Engine) demotionFinished(s *cnpg.Status) bool {
 	return s.DemotionToken != "" && s.DemotionToken != e.tokenBeforeDemote
+}
+
+// settleMin is how long a promoted target must look settled before writes are
+// released. CNPG decides on a post-promotion restart a few hundred milliseconds
+// after the promotion. A variable so tests can shorten it.
+var settleMin = 3 * time.Second
+
+// waitSettled waits until a promoted cluster is healthy, writable and has no
+// setting pending a restart, for at least settleMin and two polls in a row.
+// CNPG restarts a new primary in place when promotion changed a setting such as
+// archive_mode; that restart is a smart shutdown, which waits for every client
+// session, so the engine drops its own pool and checks with short connections.
+func (e *Engine) waitSettled(ctx context.Context, c Cluster, dsn string, slot *Database) error {
+	if *slot != nil {
+		(*slot).Close()
+		*slot = nil
+	}
+	start, stable := time.Now(), 0
+	for {
+		ok := false
+		if s, err := c.Get(ctx); err == nil && s.Healthy() {
+			if db, err := e.connect(ctx, dsn); err == nil {
+				rec, err1 := db.InRecovery(ctx)
+				pending, err2 := db.PendingRestart(ctx)
+				db.Close()
+				ok = err1 == nil && err2 == nil && !rec && !pending
+			}
+		}
+		if ok {
+			stable++
+		} else {
+			stable = 0
+		}
+		if stable >= 2 && time.Since(start) >= settleMin {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(e.poll / 4):
+		}
+	}
 }
 
 // waitWritable polls until the database at dsn is out of recovery,

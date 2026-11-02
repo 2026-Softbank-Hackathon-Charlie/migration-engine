@@ -34,6 +34,8 @@ type world struct {
 	demotedAt        time.Time
 	targetNeverWakes bool // target stays in recovery after promotion
 	connectErr       error
+	restartGets      int // target cluster is unhealthy for this many Gets after promotion
+	sourceDownCalls  int // old source is unreachable for this many calls after cutover
 
 	calls []string // ordered log of every side effect, for order assertions
 }
@@ -103,6 +105,14 @@ func (c *fakeCluster) Get(context.Context) (*cnpg.Status, error) {
 	if !c.exists {
 		return nil, fmt.Errorf("x: %w", cnpg.ErrNotFound)
 	}
+	if c.role == "dst" && c.w.restartGets > 0 && c.st.Phase != cnpg.HealthyPhase {
+		c.w.restartGets--
+		if c.w.restartGets == 0 {
+			c.st.Phase = cnpg.HealthyPhase
+			c.w.dstDB.pendingRestart = false
+			c.w.calls = append(c.w.calls, "dst.restart done")
+		}
+	}
 	if c.role == "src" && c.w.tokenAfter > 0 && !c.w.demotedAt.IsZero() && c.st.ReplicaPrimary != c.st.Self &&
 		time.Since(c.w.demotedAt) >= c.w.tokenAfter {
 		c.st.DemotionToken = "tok-" + strconv.FormatInt(c.w.srcDB.pos, 10)
@@ -142,6 +152,10 @@ func (c *fakeCluster) SetPrimary(_ context.Context, primary, token string) error
 		if !w.targetNeverWakes {
 			w.dstDB.recovery = false
 		}
+		if w.restartGets > 0 {
+			c.st.Phase = "Primary instance is being restarted in-place"
+			w.dstDB.pendingRestart = true
+		}
 	}
 	return nil
 }
@@ -169,12 +183,24 @@ type fakeDB struct {
 	pos      int64
 	recovery bool
 	posErr   error
+
+	pendingRestart bool
 }
 
 func (d *fakeDB) InRecovery(context.Context) (bool, error) {
 	d.w.mu.Lock()
 	defer d.w.mu.Unlock()
+	if d.name == "src" && d.w.sourceDownCalls > 0 && d.w.gw.routedTo == "eks" {
+		d.w.sourceDownCalls--
+		return false, errors.New("the database system is starting up")
+	}
 	return d.recovery, nil
+}
+
+func (d *fakeDB) PendingRestart(context.Context) (bool, error) {
+	d.w.mu.Lock()
+	defer d.w.mu.Unlock()
+	return d.pendingRestart, nil
 }
 
 func (d *fakeDB) WALPosition(context.Context) (string, error) {
@@ -205,6 +231,7 @@ type fakeGateway struct {
 	releaseErr error
 	routeErr   error  // returned for every route call
 	routeErrTo string // only fail routes to this backend
+	routedTo   string // last successful route, guarded by w.mu
 }
 
 func (g *fakeGateway) Health(context.Context) error { g.w.record("gw.health"); return nil }
@@ -221,6 +248,9 @@ func (g *fakeGateway) Route(_ context.Context, b string) error {
 	if g.routeErr != nil && (g.routeErrTo == "" || g.routeErrTo == b) {
 		return g.routeErr
 	}
+	g.w.mu.Lock()
+	g.routedTo = b
+	g.w.mu.Unlock()
 	return nil
 }
 
@@ -255,6 +285,12 @@ func (v *fakeVerifier) FenceGate(context.Context, Database, Database) ([]verify.
 
 func (v *fakeVerifier) Report(context.Context, Database, Database) (*Report, error) {
 	v.w.record("verify.report")
+	v.w.mu.Lock()
+	down := v.w.sourceDownCalls > 0
+	v.w.mu.Unlock()
+	if down {
+		return nil, errors.New("list tables: source: the database system is starting up")
+	}
 	r := &Report{OK: v.reportOK}
 	if !v.reportOK {
 		r.Problems = []string{"3 source rows missing on target"}
@@ -289,7 +325,7 @@ type harness struct {
 	mu     sync.Mutex
 }
 
-func init() { demotionGrace = 300 * time.Millisecond }
+func init() { demotionGrace, settleMin = 300*time.Millisecond, 20*time.Millisecond }
 
 func newHarness(t *testing.T) *harness {
 	return &harness{w: newWorld(), p: testPlan(t, true), dir: t.TempDir()}

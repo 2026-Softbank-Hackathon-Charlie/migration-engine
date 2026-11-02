@@ -63,6 +63,14 @@ func (d *DB) InRecovery(ctx context.Context) (bool, error) {
 	return b, err
 }
 
+// PendingRestart reports whether a changed setting waits for a server restart.
+// CNPG restarts a freshly promoted primary in place when this is true.
+func (d *DB) PendingRestart(ctx context.Context) (bool, error) {
+	var b bool
+	err := d.Pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_settings WHERE pending_restart)").Scan(&b)
+	return b, err
+}
+
 // ErrNoReplayLSN is returned when a standby has not replayed any WAL yet.
 var ErrNoReplayLSN = errors.New("standby has no replay LSN yet")
 

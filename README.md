@@ -75,6 +75,8 @@ bin/hopmigrate run      -plan ... -run <RUN_ID>               # 이어서 실행
 bin/hopmigrate step     -plan ... -run <RUN_ID> -step fence   # 한 단계씩 리허설
 ```
 
+이전이 성공한 뒤 `hopmigrate decommission`으로 옛 앱을 멈추고, 원본에 남은 의존성이 없는지 확인한 뒤 차단하고, 남은 리소스를 근거와 함께 보고합니다 (ADR 0010).
+
 검증 스크립트 (Docker 필요)
 - `test/integration/run.sh`: PostgreSQL primary와 standby를 띄워 `pg`, `verify` 통합 테스트
 - `test/rehearsal/run.sh`: kind에 CNPG 클러스터 두 개를 띄워 실제 엔진으로 왕복 이전과 원복 리허설 (kind, kubectl 필요)

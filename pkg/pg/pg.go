@@ -11,6 +11,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// SessionSettings are set on every engine connection so that row text, and
+// therefore verification hashes, do not depend on each cluster's defaults.
+var SessionSettings = map[string]string{
+	"TimeZone":           "UTC",
+	"DateStyle":          "ISO, MDY",
+	"IntervalStyle":      "postgres",
+	"extra_float_digits": "1",
+	"bytea_output":       "hex",
+}
+
 // DB wraps a connection pool.
 type DB struct{ Pool *pgxpool.Pool }
 
@@ -22,6 +32,12 @@ func Connect(ctx context.Context, dsn string) (*DB, error) {
 	}
 	cfg.MaxConns = 8
 	cfg.ConnConfig.ConnectTimeout = 10 * time.Second
+	// Verification hashes rows as text, and some types render differently per
+	// session (timestamptz follows TimeZone, floats follow extra_float_digits).
+	// Pin these so the same data hashes the same on clusters configured differently.
+	for k, v := range SessionSettings {
+		cfg.ConnConfig.RuntimeParams[k] = v
+	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, err

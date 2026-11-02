@@ -1,0 +1,39 @@
+# Disposable PostgreSQL pair for integration tests: a primary and a streaming
+# standby, like the source and target of a CNPG replica cluster.
+# Test-only credentials; never point the tests at a real database.
+name: hopcharlie-it
+services:
+  primary:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_PASSWORD: it
+      POSTGRES_DB: shop
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    command: ["postgres", "-c", "wal_level=replica", "-c", "max_wal_senders=5", "-c", "hot_standby=on"]
+    volumes:
+      - ./primary-init.sh:/docker-entrypoint-initdb.d/10-replication.sh:ro
+    ports: ["127.0.0.1:55432:5432"]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "shop"]
+      interval: 1s
+      retries: 60
+  standby:
+    image: postgres:17-alpine
+    user: postgres
+    depends_on:
+      primary: { condition: service_healthy }
+    environment:
+      PGPASSWORD: it
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        rm -rf /tmp/standby && mkdir -m 700 /tmp/standby
+        until pg_basebackup -h primary -U postgres -D /tmp/standby -R -X stream; do sleep 1; done
+        exec postgres -D /tmp/standby -c hot_standby=on
+    ports: ["127.0.0.1:55433:5432"]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "shop"]
+      interval: 1s
+      retries: 60

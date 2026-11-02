@@ -66,6 +66,11 @@ func newState(runID, planID string) *State {
 	return s
 }
 
+// ReadState loads the saved state of a run from dir.
+func ReadState(dir, runID string) (*State, error) {
+	return loadState(filepath.Join(dir, runID+".json"))
+}
+
 func loadState(path string) (*State, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {

@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -64,7 +65,37 @@ func (h *HTTP) Route(ctx context.Context, backend string) error {
 	return h.do(ctx, http.MethodPost, "/v1/route", map[string]string{"backend": backend})
 }
 
+// ErrNotMeasured is returned by gateways that cannot report traffic.
+var ErrNotMeasured = errors.New("this gateway does not report traffic")
+
+// Totals is the request count a backend has served since the gateway started.
+type Totals struct {
+	Requests int64 `json:"requests"`
+	Errors   int64 `json:"errors"`
+}
+
+// Totals returns per-backend request totals (GET /v1/state).
+func (h *HTTP) Totals(ctx context.Context) (map[string]Totals, error) {
+	var st struct {
+		Totals map[string]Totals `json:"totals"`
+	}
+	if err := h.call(ctx, http.MethodGet, "/v1/state", nil, &st); err != nil {
+		return nil, err
+	}
+	if st.Totals == nil {
+		return nil, errors.New("gateway /v1/state has no totals")
+	}
+	return st.Totals, nil
+}
+
+// Totals is not available without a gateway.
+func (None) Totals(context.Context) (map[string]Totals, error) { return nil, ErrNotMeasured }
+
 func (h *HTTP) do(ctx context.Context, method, path string, body any) error {
+	return h.call(ctx, method, path, body, nil)
+}
+
+func (h *HTTP) call(ctx context.Context, method, path string, body, out any) error {
 	var rd io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -91,6 +122,11 @@ func (h *HTTP) do(ctx context.Context, method, path string, body any) error {
 	if resp.StatusCode/100 != 2 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("gateway %s %s: %s: %s", method, path, resp.Status, strings.TrimSpace(string(msg)))
+	}
+	if out != nil {
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(out); err != nil {
+			return fmt.Errorf("gateway %s %s: decode: %w", method, path, err)
+		}
 	}
 	return nil
 }

@@ -47,6 +47,58 @@ bin/hopmigrate show     -run <RUN_ID>                            # 저장된 상
 
 실행 상태는 `.hopcharlie/runs/<RUN_ID>.json`에 단계마다 저장됩니다. 프로세스가 재시작돼도 `-run`으로 이어서 실행할 수 있습니다.
 
+## 원본 정리 (decommission)
+
+이전 run이 `succeeded`인 뒤에 따로 실행합니다. 이전 결과와 완료 판정은 별개입니다 (ADR 0010).
+
+```
+inventory → stop → observe → block → smoke → reconcile
+```
+
+| 단계 | 하는 일 | 실패하면 |
+| --- | --- | --- |
+| `inventory` | 원본 네임스페이스에서 `selector`에 맞는 리소스와 원본 CNPG Cluster·PVC 목록 | 종료 |
+| `stop` | 옛 Deployment·StatefulSet을 0으로, CronJob을 suspend. 원래 값은 annotation에 | 원래대로 |
+| `observe` | `observe` 동안 옛 DB의 클라이언트 세션(엔진 제외)과 게이트웨이의 원본 backend 요청 수 | 원래대로 |
+| `block` | 옛 앱과 옛 DB 파드로 들어오는 접속을 NetworkPolicy로 차단(CNPG 오퍼레이터만 허용). 엔진의 옛 DB 접속이 거부되는지 확인 | 차단 해제, 원래대로 |
+| `smoke` | 차단한 채 `smokeUrl`로 `smoke` 요청 | 차단 해제, 원래대로 |
+| `reconcile` | 다시 조회해 중지·보존·삭제 승인 대기·미처리로 분류, 리포트 | 차단 해제, 원래대로 |
+
+삭제는 하지 않습니다. 옛 CNPG Cluster와 PVC는 롤백용으로 보존하고, Service·ConfigMap·Secret·Ingress는 "삭제 승인 대기"로 남깁니다.
+
+```bash
+bin/hopmigrate decommission -plan plan.json -run <RUN_ID>          # 실행
+bin/hopmigrate decommission -plan plan.json -run <RUN_ID> -undo    # 차단 해제, 옛 앱 복구 (반대 방향 이전 전에)
+```
+
+Plan에 추가하는 부분:
+
+```json
+"decommission": {
+  "selector": "app.kubernetes.io/part-of=shop",
+  "observe": "2m",
+  "smokeUrl": "http://gateway.hopcharlie.ts.net:8000",
+  "smoke": [{"method": "GET", "path": "/healthz"}, {"method": "POST", "path": "/orders?k=decommission-smoke"}]
+}
+```
+
+상태는 `.hopcharlie/runs/<RUN_ID>.decommission.json`에 저장되고, 리포트(`report`)는 화면에 그대로 쓸 수 있게 근거를 나눠 둡니다.
+
+```json
+{
+  "passed": true,
+  "counts": {"unprocessed": 0, "stopped": 2, "retained": 2, "awaitingApproval": 3, "removed": 0},
+  "items": [{"kind": "Cluster", "name": "pg-old", "status": "retained", "reason": "old database kept as a replica of the new primary, for migrating back"}],
+  "observe": {"windowSeconds": 120, "samples": 61, "maxSourceSessions": 0, "sourceBackendRequests": 0, "notMeasured": []},
+  "block": {"policies": ["hopcharlie-decommission-app", "hopcharlie-decommission-db"], "verified": true, "attempts": 4},
+  "smoke": [{"method": "GET", "path": "/healthz", "status": 200, "millis": 3, "ok": true}]
+}
+```
+
+- `maxSourceSessions`, `sourceBackendRequests`가 `null`이면 측정하지 않은 것입니다. 0으로 표시하면 안 됩니다. 이유는 `notMeasured`에 있습니다.
+- 관찰 시간 밖에서만 도는 의존성(드문 배치 등)은 잡지 못합니다. 화면에 관찰 시간을 같이 보여 주세요.
+- 클러스터의 네트워크 플러그인이 NetworkPolicy를 적용해야 합니다. 적용하지 않으면 `block`이 실패합니다(EKS VPC CNI의 network policy, GKE Dataplane V2).
+
 ## 다른 영역과의 약속
 
 ### A. 인프라 (CNPG 설정)

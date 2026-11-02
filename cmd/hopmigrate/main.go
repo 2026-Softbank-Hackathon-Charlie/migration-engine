@@ -6,6 +6,7 @@
 //	hopmigrate step     -plan plan.json -run RUN_ID -step NAME [-json]
 //	hopmigrate verify   -plan plan.json [-json]
 //	hopmigrate show     -run RUN_ID [-state-dir DIR]
+//	hopmigrate decommission -plan plan.json -run RUN_ID [-undo] [-json]
 package main
 
 import (
@@ -22,6 +23,7 @@ import (
 	"time"
 
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/cnpg"
+	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/decommission"
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/engine"
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/files"
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/kube"
@@ -38,6 +40,8 @@ Commands:
   step      Execute one step of an existing run (rehearsal)
   verify    Run the data/file verification report on its own
   show      Print a run's saved state
+  decommission  After a succeeded run: stop the old app, prove nothing uses the
+            source, block it, smoke-test, and report what is left (-undo puts it back)
 
 Steps: ` + "precheck → prepare → presync → delta → fence → switchover → cutover → verify → finalize" + `
 
@@ -65,6 +69,8 @@ func main() {
 		err = cmdStep(ctx, args)
 	case "verify":
 		err = cmdVerify(ctx, args)
+	case "decommission":
+		err = cmdDecommission(ctx, args)
 	case "show":
 		err = cmdShow(args)
 	case "-h", "--help", "help":
@@ -339,4 +345,65 @@ func printJSON(v any) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
+}
+
+func cmdDecommission(ctx context.Context, args []string) error {
+	var c common
+	fs := flags("decommission", &c, true)
+	undo := fs.Bool("undo", false, "lift the block and restart the old app")
+	fs.Parse(args)
+	if c.runID == "" {
+		return errors.New("-run is required: the id of the succeeded migration run")
+	}
+	p, err := plan.Load(c.planPath)
+	if err != nil {
+		return err
+	}
+	emit := printEvent
+	if c.json {
+		enc := json.NewEncoder(os.Stdout)
+		emit = func(ev engine.Event) { _ = enc.Encode(ev) }
+	}
+	d, err := decommission.New(p, decommission.Options{StateDir: c.stateDir, RunID: c.runID, Emit: emit})
+	if err != nil {
+		return err
+	}
+	if *undo {
+		return d.Undo(ctx)
+	}
+	err = d.Run(ctx)
+	if rep := d.State().Report; rep != nil && !c.json {
+		printDecommissionReport(rep)
+	}
+	return err
+}
+
+func printDecommissionReport(r *decommission.Report) {
+	verdict := "PASSED"
+	if !r.Passed {
+		verdict = "NOT PASSED: " + strings.Join(r.Problems, "; ")
+	}
+	fmt.Printf("\ndecommission %s\n", verdict)
+	fmt.Printf("  resources   unprocessed %d / stopped %d / retained %d / awaiting approval %d / removed %d\n",
+		r.Counts.Unprocessed, r.Counts.Stopped, r.Counts.Retained, r.Counts.AwaitingApproval, r.Counts.Removed)
+	for _, it := range r.Items {
+		fmt.Printf("    %-18s %-34s %s\n", it.Status, it.Kind+"/"+it.Name, it.Reason)
+	}
+	if o := r.Observe; o != nil {
+		sess, reqs := "not measured", "not measured"
+		if o.MaxSourceSessions != nil {
+			sess = fmt.Sprint(*o.MaxSourceSessions)
+		}
+		if o.SourceBackendRequests != nil {
+			reqs = fmt.Sprint(*o.SourceBackendRequests)
+		}
+		fmt.Printf("  observed    %ds (%d samples): old-database client sessions %s, gateway requests to source %s\n",
+			o.WindowSeconds, o.Samples, sess, reqs)
+	}
+	if b := r.Block; b != nil {
+		fmt.Printf("  blocked     %s, old database refused the engine: %v\n", strings.Join(b.Policies, ", "), b.Verified)
+	}
+	for _, sm := range r.Smoke {
+		fmt.Printf("  smoke       %s %s -> %d ok=%v (%d ms)\n", sm.Method, sm.Path, sm.Status, sm.OK, sm.Millis)
+	}
 }

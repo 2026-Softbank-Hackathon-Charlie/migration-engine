@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -47,6 +48,32 @@ func TestValidateErrors(t *testing.T) {
 	for name, js := range cases {
 		if _, err := Parse([]byte(js)); err == nil {
 			t.Errorf("%s: expected error", name)
+		}
+	}
+}
+
+func TestDecommissionValidation(t *testing.T) {
+	base := `{"id":"p","source":{"env":"a","namespace":"n","cluster":"c1","dsn":"x"},
+	  "target":{"env":"b","namespace":"n","cluster":"c2","dsn":"y"},"decommission":%s}`
+	ok := `{"selector":"app=shop","smokeUrl":"http://gw:8000","smoke":[{"method":"GET","path":"/"}]}`
+	p, err := Parse([]byte(fmt.Sprintf(base, ok)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Decommission.Observe.Duration != 2*time.Minute {
+		t.Errorf("default observe = %s", p.Decommission.Observe)
+	}
+	bad := map[string]string{
+		"no selector":      `{"smokeUrl":"http://gw","smoke":[{"method":"GET","path":"/"}]}`,
+		"no smoke":         `{"selector":"app=shop","smokeUrl":"http://gw","smoke":[]}`,
+		"bad url":          `{"selector":"app=shop","smokeUrl":"gw:8000","smoke":[{"method":"GET","path":"/"}]}`,
+		"bad method":       `{"selector":"app=shop","smokeUrl":"http://gw","smoke":[{"method":"DELETE","path":"/"}]}`,
+		"relative path":    `{"selector":"app=shop","smokeUrl":"http://gw","smoke":[{"method":"GET","path":"x"}]}`,
+		"observe too long": `{"selector":"app=shop","observe":"2h","smokeUrl":"http://gw","smoke":[{"method":"GET","path":"/"}]}`,
+	}
+	for name, d := range bad {
+		if _, err := Parse([]byte(fmt.Sprintf(base, d))); err == nil {
+			t.Errorf("%s: accepted", name)
 		}
 	}
 }

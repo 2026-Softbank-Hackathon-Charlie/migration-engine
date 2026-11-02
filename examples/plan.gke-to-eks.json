@@ -37,5 +37,11 @@
     "catchupTimeout": "10m",
     "switchoverTimeout": "2m",
     "maxDowntime": "3m"
+  },
+  "decommission": {
+    "selector": "app.kubernetes.io/part-of=shop",
+    "observe": "2m",
+    "smokeUrl": "http://gateway.hopcharlie.ts.net:8000",
+    "smoke": [{"method": "GET", "path": "/healthz"}, {"method": "POST", "path": "/orders?k=decommission-smoke"}]
   }
 }

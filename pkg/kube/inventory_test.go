@@ -22,7 +22,7 @@ func obj(apiVersion, kind, name string, labels map[string]string, spec map[strin
 }
 
 func fakeInventory(objs ...runtime.Object) (*Inventory, *dynamicfake.FakeDynamicClient) {
-	lists := map[schema.GroupVersionResource]string{networkPolicyGVR: "NetworkPolicyList"}
+	lists := map[schema.GroupVersionResource]string{networkPolicyGVR: "NetworkPolicyList", podGVR: "PodList"}
 	for _, k := range Kinds {
 		lists[k.GVR] = k.Kind + "List"
 	}
@@ -134,11 +134,25 @@ func TestBlockAndUnblock(t *testing.T) {
 	}
 }
 
-func TestRunning(t *testing.T) {
-	d := obj("apps/v1", "Deployment", "web", app, nil)
-	d.Object["status"] = map[string]any{"replicas": int64(2)}
-	inv, _ := fakeInventory(d)
-	if n, err := inv.Running(context.Background(), Resource{"Deployment", "web"}); err != nil || n != 2 {
-		t.Fatalf("running = %d, %v", n, err)
+// A pod that got its stop signal still runs (and holds connections) until
+// its graceful shutdown ends; status.replicas already leaves it out.
+func TestRunningCountsTerminatingPods(t *testing.T) {
+	d := obj("apps/v1", "Deployment", "web", app, map[string]any{
+		"replicas": int64(0), "selector": map[string]any{"matchLabels": map[string]any{"app": "web"}},
+	})
+	d.Object["status"] = map[string]any{"replicas": int64(0)}
+	pod := func(name, phase string, terminating bool) *unstructured.Unstructured {
+		p := obj("v1", "Pod", name, map[string]string{"app": "web"}, nil)
+		p.Object["status"] = map[string]any{"phase": phase}
+		if terminating {
+			now := metav1.Now()
+			p.SetDeletionTimestamp(&now)
+		}
+		return p
+	}
+	other := obj("v1", "Pod", "other", map[string]string{"app": "other"}, nil)
+	inv, _ := fakeInventory(d, pod("web-1", "Running", true), pod("web-2", "Succeeded", false), other)
+	if n, err := inv.Running(context.Background(), Resource{"Deployment", "web"}); err != nil || n != 1 {
+		t.Fatalf("running = %d, %v; want 1 (the terminating pod)", n, err)
 	}
 }

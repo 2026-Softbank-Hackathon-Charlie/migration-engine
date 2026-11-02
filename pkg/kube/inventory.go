@@ -10,6 +10,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
@@ -39,7 +40,10 @@ var Kinds = []struct {
 	{"Cluster", cnpg.ClusterGVR},
 }
 
-var networkPolicyGVR = schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies"}
+var (
+	networkPolicyGVR = schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies"}
+	podGVR           = schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+)
 
 func gvrOf(kind string) (schema.GroupVersionResource, error) {
 	for _, k := range Kinds {
@@ -182,7 +186,10 @@ func (i *Inventory) Restore(ctx context.Context, r Resource) error {
 	return fmt.Errorf("cannot restore %s", r)
 }
 
-// Running is the number of pods (Deployment, StatefulSet) or active jobs (CronJob).
+// Running is the number of pods of a Deployment or StatefulSet that still
+// exist, terminating ones included, or the active jobs of a CronJob. A pod
+// that got its stop signal keeps running (and holding connections) until its
+// graceful shutdown ends, while status.replicas already leaves it out.
 func (i *Inventory) Running(ctx context.Context, r Resource) (int64, error) {
 	obj, err := i.get(ctx, r)
 	if err != nil {
@@ -190,7 +197,30 @@ func (i *Inventory) Running(ctx context.Context, r Resource) (int64, error) {
 	}
 	switch r.Kind {
 	case "Deployment", "StatefulSet":
-		n, _, _ := unstructured.NestedInt64(obj.Object, "status", "replicas")
+		raw, found, err := unstructured.NestedMap(obj.Object, "spec", "selector")
+		if err != nil || !found {
+			return 0, fmt.Errorf("%s has no spec.selector", r)
+		}
+		var ls metav1.LabelSelector
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(raw, &ls); err != nil {
+			return 0, fmt.Errorf("%s selector: %w", r, err)
+		}
+		sel, err := metav1.LabelSelectorAsSelector(&ls)
+		if err != nil {
+			return 0, fmt.Errorf("%s selector: %w", r, err)
+		}
+		pods, err := i.Dyn.Resource(podGVR).Namespace(i.Namespace).List(ctx, metav1.ListOptions{LabelSelector: sel.String()})
+		if err != nil {
+			return 0, fmt.Errorf("list pods of %s: %w", r, err)
+		}
+		var n int64
+		for _, p := range pods.Items {
+			switch phase, _, _ := unstructured.NestedString(p.Object, "status", "phase"); phase {
+			case "Succeeded", "Failed":
+			default:
+				n++
+			}
+		}
 		return n, nil
 	case "CronJob":
 		active, _, _ := unstructured.NestedSlice(obj.Object, "status", "active")

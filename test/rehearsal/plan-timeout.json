@@ -1,0 +1,32 @@
+{
+  "id": "rehearsal-dst-to-src-timeout",
+  "source": {
+    "env": "dst",
+    "context": "kind-hop",
+    "namespace": "hop",
+    "cluster": "pg-dst",
+    "dsn": "postgres://app:${SRC_PGPASSWORD}@127.0.0.1:55543/app?sslmode=require"
+  },
+  "target": {
+    "env": "src",
+    "context": "kind-hop",
+    "namespace": "hop",
+    "cluster": "pg-src",
+    "dsn": "postgres://app:${SRC_PGPASSWORD}@127.0.0.1:55542/app?sslmode=require"
+  },
+  "gateway": {
+    "mode": "none"
+  },
+  "verify": {
+    "schemas": [
+      "public"
+    ],
+    "fenceGate": true
+  },
+  "thresholds": {
+    "maxLagBytes": 1048576,
+    "catchupTimeout": "10m",
+    "switchoverTimeout": "300ms",
+    "maxDowntime": "3m"
+  }
+}

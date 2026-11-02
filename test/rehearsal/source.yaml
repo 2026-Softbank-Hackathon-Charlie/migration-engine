@@ -1,0 +1,21 @@
+# Source primary of the distributed topology (same shape as examples/cnpg).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata: { name: pg-src, namespace: hop }
+spec:
+  instances: 1
+  storage: { size: 1Gi }
+  bootstrap:
+    initdb: { database: app, owner: app }
+  replica: { self: pg-src, primary: pg-src, source: pg-dst }
+  externalClusters:
+    - name: pg-src
+      connectionParameters: { host: pg-src-rw.hop.svc, user: streaming_replica, dbname: postgres, sslmode: verify-full }
+      sslKey: { name: pg-src-replication, key: tls.key }
+      sslCert: { name: pg-src-replication, key: tls.crt }
+      sslRootCert: { name: pg-src-ca, key: ca.crt }
+    - name: pg-dst
+      connectionParameters: { host: pg-dst-rw.hop.svc, user: streaming_replica, dbname: postgres, sslmode: verify-full }
+      sslKey: { name: pg-dst-replication, key: tls.key }
+      sslCert: { name: pg-dst-replication, key: tls.crt }
+      sslRootCert: { name: pg-dst-ca, key: ca.crt }

@@ -75,4 +75,8 @@ bin/hopmigrate run      -plan ... -run <RUN_ID>               # 이어서 실행
 bin/hopmigrate step     -plan ... -run <RUN_ID> -step fence   # 한 단계씩 리허설
 ```
 
-각 단계의 세부 동작, 다른 팀과의 약속(CNPG 설정, 게이트웨이 API, k6 기록 형식), 알려진 한계는 [docs/details.md](docs/details.md)에 있습니다.
+검증 스크립트 (Docker 필요)
+- `test/integration/run.sh`: PostgreSQL primary와 standby를 띄워 `pg`, `verify` 통합 테스트
+- `test/rehearsal/run.sh`: kind에 CNPG 클러스터 두 개를 띄워 실제 엔진으로 왕복 이전과 원복 리허설 (kind, kubectl 필요)
+
+각 단계의 세부 동작, 다른 팀과의 약속(CNPG 설정, 게이트웨이 API, k6 기록 형식), 알려진 한계는 [docs/details.md](docs/details.md)에 있습니다. 왜 이렇게 만들었는지는 [docs/adr](docs/adr)에 있습니다.

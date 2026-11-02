@@ -125,12 +125,28 @@ func TestFailureOutcomes(t *testing.T) {
 			mustNotCall: []string{`src.setPrimary db-eks token=""`, `dst.setPrimary db-eks token="tok-1000"`},
 		},
 		{
-			name:        "switchover: no demotion token -> source re-promoted, rolled back",
+			// Re-promoting while CNPG is still demoting leaves the source fenced (seen on a real cluster).
+			name:        "switchover: demotion never finishes -> halted, source not touched mid-transition",
 			fault:       func(w *world) { w.noDemotionToken = true },
 			failStep:    StepSwitchover,
+			outcome:     OutcomeHalted,
+			mustCall:    []string{`src.setPrimary db-eks token=""`},
+			mustNotCall: []string{"src.setPrimary db-gke", "gw.release", `dst.setPrimary db-eks token="tok-1000"`},
+		},
+		{
+			name:        "switchover: demotion finishes after the timeout -> waits for it, then rolled back",
+			fault:       func(w *world) { w.tokenAfter = 1200 * time.Millisecond },
+			failStep:    StepSwitchover,
 			outcome:     OutcomeRolledBack,
-			mustCall:    []string{`src.setPrimary db-eks token=""`, `src.setPrimary db-gke token=""`, "gw.route gke", "gw.release"},
+			mustCall:    []string{`src.setPrimary db-eks token=""`, `src.setPrimary db-gke token="tok-1000"`, "gw.route gke", "gw.release"},
 			mustNotCall: []string{`dst.setPrimary db-eks token="tok-1000"`},
+		},
+		{
+			name:        "switchover: token left from an earlier demotion is not used to promote",
+			fault:       func(w *world) { w.src.st.DemotionToken = "tok-old"; w.noDemotionToken = true },
+			failStep:    StepSwitchover,
+			outcome:     OutcomeHalted,
+			mustNotCall: []string{`dst.setPrimary db-eks token="tok-old"`, "src.setPrimary db-gke"},
 		},
 		{
 			name:        "switchover: target never writable after promotion -> halted, no rollback",
@@ -138,14 +154,14 @@ func TestFailureOutcomes(t *testing.T) {
 			failStep:    StepSwitchover,
 			outcome:     OutcomeHalted,
 			mustCall:    []string{`dst.setPrimary db-eks token="tok-1000"`},
-			mustNotCall: []string{"gw.route gke", "gw.release", `src.setPrimary db-gke token=""`},
+			mustNotCall: []string{"gw.route gke", "gw.release", "src.setPrimary db-gke"},
 		},
 		{
 			name:        "cutover: route fails -> halted",
 			fault:       func(w *world) { w.gw.routeErr = errors.New("503") },
 			failStep:    StepCutover,
 			outcome:     OutcomeHalted,
-			mustNotCall: []string{"gw.release", `src.setPrimary db-gke token=""`},
+			mustNotCall: []string{"gw.release", "src.setPrimary db-gke"},
 		},
 		{
 			name:        "verify: missing rows -> halted (target already serving)",
@@ -177,7 +193,7 @@ func TestFailureOutcomes(t *testing.T) {
 				indexOf(t, calls, c)
 			}
 			for _, c := range tc.mustNotCall {
-				if contains(calls, c) {
+				if slices.ContainsFunc(calls, func(call string) bool { return strings.HasPrefix(call, c) }) {
 					t.Errorf("must not call %q; calls: %v", c, calls)
 				}
 			}

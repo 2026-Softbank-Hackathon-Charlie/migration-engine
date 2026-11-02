@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -99,6 +100,11 @@ type Engine struct {
 	rclone       FileSyncer // nil when the plan has no files
 	verifier     Verifier
 	poll         time.Duration
+
+	// tokenBeforeDemote is the source demotion token seen just before this run
+	// demoted it. CNPG may keep an old token in status, so a demotion counts as
+	// finished only when a different token appears.
+	tokenBeforeDemote string
 }
 
 // New builds an Engine, creating or resuming run state. Database connections are opened lazily.
@@ -182,11 +188,24 @@ func (e *Engine) RunID() string { return e.state.RunID }
 // StatePath returns the state file path.
 func (e *Engine) StatePath() string { return e.statePath }
 
-// State returns a snapshot copy of the run state.
+// State returns a snapshot of the run state that is safe to read from any
+// goroutine, including while a step is running. Step records and their
+// evidence maps are copied; evidence values are never mutated after a step
+// stores them, so they are shared.
 func (e *Engine) State() State {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return *e.state
+	s := *e.state
+	s.Steps = make(map[string]*StepRecord, len(e.state.Steps))
+	for name, rec := range e.state.Steps {
+		if rec == nil {
+			continue
+		}
+		r := *rec
+		r.Evidence = maps.Clone(rec.Evidence)
+		s.Steps[name] = &r
+	}
+	return s
 }
 
 // Close releases database connections.
@@ -313,7 +332,7 @@ func (e *Engine) onFailure(step string, cause error) error {
 	e.mu.Unlock()
 
 	// A fresh context: the caller's may already be cancelled (e.g. Ctrl-C).
-	ctx, cancel := context.WithTimeout(context.Background(), e.plan.Thresholds.SwitchoverTimeout.Duration+time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*e.plan.Thresholds.SwitchoverTimeout.Duration+demotionGrace+time.Minute)
 	defer cancel()
 
 	switch {
@@ -354,15 +373,36 @@ func (e *Engine) onFailure(step string, cause error) error {
 	}
 }
 
+// demotionGrace is how much longer than switchoverTimeout a rollback waits for
+// an in-flight demotion to finish. A variable so tests can shorten it.
+var demotionGrace = 30 * time.Second
+
 // rollback restores the source as primary and releases held writes to it.
 // Only valid while the target has not been asked to promote.
 func (e *Engine) rollback(ctx context.Context) error {
 	if e.state.SourceDemoted {
+		// CNPG demotes by fencing and stopping the instances, publishing a token
+		// and restarting them as replicas. A promotion requested before that ends
+		// is lost: reverting replica.primary mid-demotion left the instances fenced,
+		// and promoting right after the token appeared left the instance a standby,
+		// both while the Cluster reported healthy (seen on a real cluster). So wait
+		// until the source runs as a replica, then promote it with its own token,
+		// the same path a normal promotion takes. If the demotion does not finish,
+		// the state is unknown: leave it to an operator.
+		wctx, cancel := context.WithTimeout(ctx, e.plan.Thresholds.SwitchoverTimeout.Duration+demotionGrace)
+		demoted, err := e.src.WaitFor(wctx, e.poll, e.demotionFinished)
+		if err == nil {
+			err = e.waitRecovery(wctx, e.plan.Source.DSN, &e.srcDB, true)
+		}
+		cancel()
+		if err != nil {
+			return fmt.Errorf("source demotion did not finish, not re-promoting it mid-transition: %w", err)
+		}
 		srcSelf, err := e.selfName(ctx, e.src)
 		if err != nil {
 			return err
 		}
-		if err := e.src.SetPrimary(ctx, srcSelf, ""); err != nil {
+		if err := e.src.SetPrimary(ctx, srcSelf, demoted.DemotionToken); err != nil {
 			return err
 		}
 		e.log(StepSwitchover, "re-promoting source", map[string]any{"primary": srcSelf})

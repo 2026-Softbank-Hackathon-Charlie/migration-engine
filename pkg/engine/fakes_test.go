@@ -29,7 +29,9 @@ type world struct {
 	ver      *fakeVerifier
 
 	// Fault switches.
-	noDemotionToken  bool // source never publishes a token
+	noDemotionToken  bool          // source never publishes a token
+	tokenAfter       time.Duration // source publishes the token this long after demotion
+	demotedAt        time.Time
 	targetNeverWakes bool // target stays in recovery after promotion
 	connectErr       error
 
@@ -101,6 +103,10 @@ func (c *fakeCluster) Get(context.Context) (*cnpg.Status, error) {
 	if !c.exists {
 		return nil, fmt.Errorf("x: %w", cnpg.ErrNotFound)
 	}
+	if c.role == "src" && c.w.tokenAfter > 0 && !c.w.demotedAt.IsZero() && c.st.ReplicaPrimary != c.st.Self &&
+		time.Since(c.w.demotedAt) >= c.w.tokenAfter {
+		c.st.DemotionToken = "tok-" + strconv.FormatInt(c.w.srcDB.pos, 10)
+	}
 	s := c.st
 	return &s, nil
 }
@@ -125,7 +131,8 @@ func (c *fakeCluster) SetPrimary(_ context.Context, primary, token string) error
 	switch {
 	case c.role == "src" && primary != c.st.Self: // demote
 		w.srcDB.recovery = true
-		if !w.noDemotionToken {
+		w.demotedAt = time.Now()
+		if !w.noDemotionToken && w.tokenAfter == 0 {
 			c.st.DemotionToken = "tok-" + strconv.FormatInt(w.srcDB.pos, 10)
 		}
 	case c.role == "src" && primary == c.st.Self: // re-promote (rollback)
@@ -281,6 +288,8 @@ type harness struct {
 	events []Event
 	mu     sync.Mutex
 }
+
+func init() { demotionGrace = 300 * time.Millisecond }
 
 func newHarness(t *testing.T) *harness {
 	return &harness{w: newWorld(), p: testPlan(t, true), dir: t.TempDir()}

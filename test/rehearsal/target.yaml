@@ -1,0 +1,23 @@
+# Target replica. The engine applies this in prepare when it does not exist.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata: { name: pg-dst, namespace: hop }
+spec:
+  instances: 1
+  storage: { size: 1Gi }
+  bootstrap:
+    # Use the source's app credentials. Otherwise CNPG generates pg-dst-app and
+    # changes the app password when the target is promoted.
+    pg_basebackup: { source: pg-src, database: app, owner: app, secret: { name: pg-src-app } }
+  replica: { self: pg-dst, primary: pg-src, source: pg-src }
+  externalClusters:
+    - name: pg-src
+      connectionParameters: { host: pg-src-rw.hop.svc, user: streaming_replica, dbname: postgres, sslmode: verify-full }
+      sslKey: { name: pg-src-replication, key: tls.key }
+      sslCert: { name: pg-src-replication, key: tls.crt }
+      sslRootCert: { name: pg-src-ca, key: ca.crt }
+    - name: pg-dst
+      connectionParameters: { host: pg-dst-rw.hop.svc, user: streaming_replica, dbname: postgres, sslmode: verify-full }
+      sslKey: { name: pg-dst-replication, key: tls.key }
+      sslCert: { name: pg-dst-replication, key: tls.crt }
+      sslRootCert: { name: pg-dst-ca, key: ca.crt }

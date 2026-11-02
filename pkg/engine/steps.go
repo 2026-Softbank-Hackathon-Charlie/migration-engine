@@ -237,12 +237,13 @@ func (e *Engine) switchover(ctx context.Context) (map[string]any, error) {
 	if err != nil {
 		return ev, err
 	}
+	e.tokenBeforeDemote = srcS.DemotionToken
 	e.setFlags(func(s *State) { s.SourceDemoted = true })
 	if err := e.src.SetPrimary(tctx, dstS.Self, ""); err != nil {
 		return ev, fmt.Errorf("demote source: %w", err)
 	}
 	e.log(StepSwitchover, "source demotion requested", map[string]any{"newPrimary": dstS.Self})
-	demoted, err := e.src.WaitFor(tctx, e.poll/2, func(s *cnpg.Status) bool { return s.DemotionToken != "" })
+	demoted, err := e.src.WaitFor(tctx, e.poll/2, e.demotionFinished)
 	if err != nil {
 		return ev, fmt.Errorf("waiting for demotion token: %w", err)
 	}
@@ -421,9 +422,20 @@ func (e *Engine) waitReplayed(ctx context.Context, lsn string) (string, error) {
 	}
 }
 
+// demotionFinished reports whether the source published a demotion token from
+// this run's demotion, not one left over from an earlier demotion.
+func (e *Engine) demotionFinished(s *cnpg.Status) bool {
+	return s.DemotionToken != "" && s.DemotionToken != e.tokenBeforeDemote
+}
+
 // waitWritable polls until the database at dsn is out of recovery,
 // reconnecting as needed (pods may restart during promotion).
 func (e *Engine) waitWritable(ctx context.Context, dsn string, slot *Database) error {
+	return e.waitRecovery(ctx, dsn, slot, false)
+}
+
+// waitRecovery polls until the database at dsn reports pg_is_in_recovery() == want.
+func (e *Engine) waitRecovery(ctx context.Context, dsn string, slot *Database, want bool) error {
 	for {
 		if *slot == nil {
 			if db, err := e.connect(ctx, dsn); err == nil {
@@ -432,7 +444,7 @@ func (e *Engine) waitWritable(ctx context.Context, dsn string, slot *Database) e
 		}
 		if *slot != nil {
 			rec, err := (*slot).InRecovery(ctx)
-			if err == nil && !rec {
+			if err == nil && rec == want {
 				return nil
 			}
 			if err != nil {

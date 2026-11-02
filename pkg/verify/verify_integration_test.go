@@ -195,3 +195,42 @@ func TestCheckWritten(t *testing.T) {
 		t.Errorf("samples = %v", res.Samples)
 	}
 }
+
+// After cutover the old source is a replica of the new primary and keeps
+// receiving the rows written there. MissingRows must not report those as
+// missing (seen in a local end-to-end run under load).
+func TestMissingRowsWithSourceFollowingTarget(t *testing.T) {
+	primaryDSN, standbyDSN := os.Getenv("HOPCHARLIE_IT_PRIMARY_DSN"), os.Getenv("HOPCHARLIE_IT_STANDBY_DSN")
+	if primaryDSN == "" || standbyDSN == "" {
+		t.Skip("run test/integration/run.sh")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	target := connect(t, ctx, primaryDSN) // the new primary
+	source := connect(t, ctx, standbyDSN) // the old source, now following it
+	if _, err := target.Pool.Exec(ctx, `DROP TABLE IF EXISTS follow; CREATE TABLE follow (id bigserial PRIMARY KEY, pad text);
+		INSERT INTO follow (pad) SELECT repeat('x', 200) FROM generate_series(1, 20000)`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = target.Pool.Exec(context.Background(), "DROP TABLE IF EXISTS follow") })
+
+	wctx, stop := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() { // keep writing on the target while verifying
+		defer close(done)
+		for wctx.Err() == nil {
+			_, _ = target.Pool.Exec(wctx, "INSERT INTO follow (pad) SELECT repeat('y', 200) FROM generate_series(1, 200)")
+		}
+	}()
+	tbl := []verify.Table{{Schema: "public", Name: "follow", PK: []string{"id"}}}
+	for i := 0; i < 60; i++ {
+		res, missing := verify.MissingRows(ctx, source.Pool, target.Pool, tbl)
+		if missing != 0 {
+			stop()
+			<-done
+			t.Fatalf("round %d: %d rows reported missing although the source only follows the target: %+v", i, missing, res)
+		}
+	}
+	stop()
+	<-done
+}

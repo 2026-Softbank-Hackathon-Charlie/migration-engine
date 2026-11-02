@@ -55,6 +55,7 @@ bin/hopmigrate show     -run <RUN_ID>                            # 저장된 상
 - **Argo CD가 `spec.replica`를 되돌리지 않게** 해야 합니다. `ignoreDifferences`에 `/spec/replica`를 넣거나, 이전하는 동안 auto-sync를 끕니다.
 - Plan의 `dsn`은 각 클러스터의 `-rw` 서비스로 Tailscale을 통해 닿아야 합니다.
 - 대상 Cluster는 **원본의 app Secret을 그대로 써야 합니다** (`bootstrap.pg_basebackup.database/owner/secret`, Secret은 대상 클러스터에 복사). 안 그러면 CNPG가 새 비밀번호를 만들고, 승격하는 순간 app 비밀번호가 바뀌어 앱이 접속하지 못합니다.
+- 양쪽 Cluster에 **`smartShutdownTimeout`을 짧게(예: 5초)** 둡니다. CNPG는 승격 직후 새 primary를 smart shutdown으로 재시작하는데, 기본값(180초)이면 앱 커넥션 풀 때문에 새 primary가 최대 3분 동안 내려가 있습니다. 엔진은 이 재시작이 끝날 때까지 쓰기를 붙잡습니다 (ADR 0009).
 - 로컬 kind(CNPG 1.25.1)에서는 WAL 아카이브 없이 스트리밍만으로 demote/promote가 됩니다 (`test/rehearsal/run.sh`). 클러스터 사이 네트워크는 실제 환경에서 다시 확인해야 합니다.
 
 ### C. 게이트웨이 HTTP 계약 (`pkg/gateway`, 아직 제안 단계)

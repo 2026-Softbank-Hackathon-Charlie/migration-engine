@@ -183,20 +183,20 @@ func MissingRows(ctx context.Context, src, dst *pgxpool.Pool, tables []Table) ([
 }
 
 func missingRows(ctx context.Context, src, dst *pgxpool.Pool, t Table, r *MissingResult) error {
+	// Read the source first. After cutover the old source replicates the new
+	// primary, so rows written to the target between two reads can show up on
+	// the source; reading the target first would report them as missing. The
+	// target only gains rows, so every key seen on the source earlier must be
+	// on the target read afterwards.
+	keys, err := pkList(ctx, src, t)
+	if err != nil {
+		return fmt.Errorf("source: %w", err)
+	}
 	have, err := pkSet(ctx, dst, t)
 	if err != nil {
 		return fmt.Errorf("target: %w", err)
 	}
-	rows, err := src.Query(ctx, fmt.Sprintf("SELECT %s FROM %s AS t", pkExpr(t), t.Ident()))
-	if err != nil {
-		return fmt.Errorf("source: %w", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var k string
-		if err := rows.Scan(&k); err != nil {
-			return err
-		}
+	for _, k := range keys {
 		r.Checked++
 		if _, ok := have[k]; !ok {
 			r.Missing++
@@ -205,7 +205,24 @@ func missingRows(ctx context.Context, src, dst *pgxpool.Pool, t Table, r *Missin
 			}
 		}
 	}
-	return rows.Err()
+	return nil
+}
+
+func pkList(ctx context.Context, db *pgxpool.Pool, t Table) ([]string, error) {
+	rows, err := db.Query(ctx, fmt.Sprintf("SELECT %s FROM %s AS t", pkExpr(t), t.Ident()))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			return nil, err
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
 }
 
 // WrittenRecord is one line of the k6 success log.

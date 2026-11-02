@@ -54,7 +54,8 @@ bin/hopmigrate show     -run <RUN_ID>                            # 저장된 상
 - 대상이 원본의 `streaming_replica` 인증서와 CA로 접속할 수 있도록 Secret을 양쪽 클러스터에 복사해야 합니다.
 - **Argo CD가 `spec.replica`를 되돌리지 않게** 해야 합니다. `ignoreDifferences`에 `/spec/replica`를 넣거나, 이전하는 동안 auto-sync를 끕니다.
 - Plan의 `dsn`은 각 클러스터의 `-rw` 서비스로 Tailscale을 통해 닿아야 합니다.
-- ⚠️ CNPG 문서는 distributed topology 예시를 WAL 아카이브(Barman/오브젝트 스토어)와 함께 보여줍니다. 스트리밍만으로 demote/promote가 되는지는 **실제 클러스터에서 리허설로 확인해야 합니다.** 안 되면 MinIO/S3 WAL 아카이브를 추가합니다.
+- 대상 Cluster는 **원본의 app Secret을 그대로 써야 합니다** (`bootstrap.pg_basebackup.database/owner/secret`, Secret은 대상 클러스터에 복사). 안 그러면 CNPG가 새 비밀번호를 만들고, 승격하는 순간 app 비밀번호가 바뀌어 앱이 접속하지 못합니다.
+- 로컬 kind(CNPG 1.25.1)에서는 WAL 아카이브 없이 스트리밍만으로 demote/promote가 됩니다 (`test/rehearsal/run.sh`). 클러스터 사이 네트워크는 실제 환경에서 다시 확인해야 합니다.
 
 ### C. 게이트웨이 HTTP 계약 (`pkg/gateway`, 아직 제안 단계)
 | 요청 | 의미 |

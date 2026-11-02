@@ -10,6 +10,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func connectEnv(t *testing.T, env string) *DB {
@@ -106,5 +108,27 @@ func TestLagCatchesUp(t *testing.T) {
 			t.Fatalf("standby did not reach %s: %v", fence, ctx.Err())
 		case <-time.After(100 * time.Millisecond):
 		}
+	}
+}
+
+// The engine's own connections are left out; other clients are counted.
+func TestClientSessions(t *testing.T) {
+	ctx := context.Background()
+	primary := connectEnv(t, "HOPCHARLIE_IT_PRIMARY_DSN")
+	other, err := pgxpool.New(ctx, os.Getenv("HOPCHARLIE_IT_PRIMARY_DSN")+"&application_name=some-app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	base, err := primary.ClientSessions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := other.Ping(ctx); err != nil {
+		t.Fatal(err)
+	}
+	n, err := primary.ClientSessions(ctx)
+	if err != nil || n != base+1 {
+		t.Fatalf("sessions = %d, %v; want %d (one more app session)", n, err, base+1)
 	}
 }

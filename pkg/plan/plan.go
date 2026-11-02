@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -22,6 +23,9 @@ type Plan struct {
 	Gateway    GatewaySpec `json:"gateway"`
 	Verify     VerifySpec  `json:"verify"`
 	Thresholds Thresholds  `json:"thresholds"`
+	// Decommission configures the clean-up of the source after a successful
+	// migration (hopmigrate decommission). Optional.
+	Decommission *DecommissionSpec `json:"decommission,omitempty"`
 }
 
 // Endpoint is one environment (gke / eks / onprem) holding a CNPG Cluster.
@@ -78,6 +82,28 @@ type Thresholds struct {
 	CatchupTimeout    Duration `json:"catchupTimeout,omitempty"`    // default 10m
 	SwitchoverTimeout Duration `json:"switchoverTimeout,omitempty"` // default 2m
 	MaxDowntime       Duration `json:"maxDowntime,omitempty"`       // default 3m
+}
+
+// DecommissionSpec says what belongs to the app in the source environment and
+// how to prove the new environment no longer depends on it.
+type DecommissionSpec struct {
+	// Selector is a Kubernetes label selector for the app's resources in
+	// source.namespace, e.g. "app.kubernetes.io/part-of=shop". Required.
+	Selector string `json:"selector"`
+	// Observe is how long source connections are counted after the old app is
+	// stopped. Default 2m.
+	Observe Duration `json:"observe,omitempty"`
+	// SmokeURL is where user traffic enters (the gateway's public address).
+	SmokeURL string `json:"smokeUrl"`
+	// Smoke requests must all succeed while the source is blocked.
+	Smoke []SmokeRequest `json:"smoke"`
+}
+
+// SmokeRequest is one request sent to SmokeURL.
+type SmokeRequest struct {
+	Method string `json:"method"`           // GET, HEAD or POST
+	Path   string `json:"path"`             // starts with "/"
+	Expect int    `json:"expect,omitempty"` // status code; 0 means any 2xx
 }
 
 // Duration is a time.Duration that (un)marshals as a Go duration string ("90s").
@@ -163,6 +189,9 @@ func (p *Plan) applyDefaults() {
 	if t.MaxDowntime.Duration == 0 {
 		t.MaxDowntime.Duration = 3 * time.Minute
 	}
+	if d := p.Decommission; d != nil && d.Observe.Duration == 0 {
+		d.Observe.Duration = 2 * time.Minute
+	}
 }
 
 // Validate checks that the plan is executable.
@@ -206,5 +235,38 @@ func (p *Plan) Validate() error {
 	if p.Thresholds.MaxLagBytes < 0 {
 		errs = append(errs, errors.New("thresholds.maxLagBytes must be >= 0"))
 	}
+	if d := p.Decommission; d != nil {
+		errs = append(errs, d.validate()...)
+	}
 	return errors.Join(errs...)
+}
+
+func (d *DecommissionSpec) validate() []error {
+	var errs []error
+	if strings.TrimSpace(d.Selector) == "" {
+		errs = append(errs, errors.New("decommission.selector is required (a label selector for the app's resources)"))
+	}
+	if d.Observe.Duration < 0 || d.Observe.Duration > time.Hour {
+		errs = append(errs, errors.New("decommission.observe must be between 0 and 1h"))
+	}
+	if u, err := url.Parse(d.SmokeURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		errs = append(errs, errors.New("decommission.smokeUrl must be an http(s) URL"))
+	}
+	if len(d.Smoke) == 0 {
+		errs = append(errs, errors.New("decommission.smoke needs at least one request: the source is blocked only after the new environment is shown to work without it"))
+	}
+	for i, r := range d.Smoke {
+		switch r.Method {
+		case "GET", "HEAD", "POST":
+		default:
+			errs = append(errs, fmt.Errorf("decommission.smoke[%d].method must be GET, HEAD or POST", i))
+		}
+		if !strings.HasPrefix(r.Path, "/") {
+			errs = append(errs, fmt.Errorf("decommission.smoke[%d].path must start with /", i))
+		}
+		if r.Expect != 0 && (r.Expect < 100 || r.Expect > 599) {
+			errs = append(errs, fmt.Errorf("decommission.smoke[%d].expect is not an HTTP status", i))
+		}
+	}
+	return errs
 }

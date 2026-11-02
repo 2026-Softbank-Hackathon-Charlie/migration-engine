@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -125,5 +126,26 @@ func TestNoneIsNoop(t *testing.T) {
 	ctx := context.Background()
 	if g.Health(ctx) != nil || g.HoldWrites(ctx) != nil || g.ReleaseWrites(ctx) != nil || g.Route(ctx, "x") != nil {
 		t.Fatal("None must never fail")
+	}
+}
+
+func TestTotals(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/state" || r.Header.Get("Authorization") != "Bearer tok" {
+			http.Error(w, "unexpected", http.StatusBadRequest)
+			return
+		}
+		w.Write([]byte(`{"writeBackend":"eks","totals":{"gke":{"requests":12,"errors":1},"eks":{"requests":900,"errors":0}}}`))
+	}))
+	defer srv.Close()
+	got, err := NewHTTP(srv.URL, "tok").Totals(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["gke"].Requests != 12 || got["gke"].Errors != 1 || got["eks"].Requests != 900 {
+		t.Errorf("totals = %+v", got)
+	}
+	if _, err := (None{}).Totals(context.Background()); !errors.Is(err, ErrNotMeasured) {
+		t.Errorf("None.Totals err = %v, want ErrNotMeasured", err)
 	}
 }

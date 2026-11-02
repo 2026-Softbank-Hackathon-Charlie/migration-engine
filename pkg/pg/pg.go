@@ -19,7 +19,12 @@ var SessionSettings = map[string]string{
 	"IntervalStyle":      "postgres",
 	"extra_float_digits": "1",
 	"bytea_output":       "hex",
+	// Lets the engine leave its own sessions out when it counts clients.
+	"application_name": AppName,
 }
+
+// AppName is the application_name of every engine connection.
+const AppName = "hopcharlie-engine"
 
 // DB wraps a connection pool.
 type DB struct{ Pool *pgxpool.Pool }
@@ -69,6 +74,15 @@ func (d *DB) PendingRestart(ctx context.Context) (bool, error) {
 	var b bool
 	err := d.Pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_settings WHERE pending_restart)").Scan(&b)
 	return b, err
+}
+
+// ClientSessions counts client sessions other than the engine's own: what is
+// still connected to this database from applications, batch jobs or people.
+func (d *DB) ClientSessions(ctx context.Context) (int, error) {
+	var n int
+	err := d.Pool.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity
+		WHERE backend_type = 'client backend' AND application_name <> $1`, AppName).Scan(&n)
+	return n, err
 }
 
 // ErrNoReplayLSN is returned when a standby has not replayed any WAL yet.

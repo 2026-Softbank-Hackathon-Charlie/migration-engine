@@ -87,13 +87,14 @@ func (w *world) connect(_ context.Context, dsn string) (Database, error) {
 // --- cluster ---
 
 type fakeCluster struct {
-	w      *world
-	role   string
-	st     cnpg.Status
-	exists bool
-	getErr error
-	setErr error
-	gets   int
+	w        *world
+	role     string
+	st       cnpg.Status
+	exists   bool
+	getErr   error
+	setErr   error
+	applyErr error
+	gets     int
 }
 
 func (c *fakeCluster) Get(context.Context) (*cnpg.Status, error) {
@@ -133,8 +134,11 @@ func (c *fakeCluster) Get(context.Context) (*cnpg.Status, error) {
 func (c *fakeCluster) ApplyManifest(_ context.Context, path string) error {
 	c.w.record(c.role + ".apply " + path)
 	c.w.mu.Lock()
+	defer c.w.mu.Unlock()
+	if c.applyErr != nil {
+		return c.applyErr
+	}
 	c.exists = true
-	c.w.mu.Unlock()
 	return nil
 }
 
@@ -196,6 +200,9 @@ type fakeDB struct {
 	pos      int64
 	recovery bool
 	posErr   error
+	// posErrCalls makes this many WALPosition calls fail before they succeed
+	// (a connection blip while measuring lag).
+	posErrCalls int
 
 	pendingRestart bool
 }
@@ -222,6 +229,10 @@ func (d *fakeDB) WALPosition(context.Context) (string, error) {
 	if d.posErr != nil {
 		return "", d.posErr
 	}
+	if d.posErrCalls > 0 {
+		d.posErrCalls--
+		return "", errors.New("connection reset by peer")
+	}
 	return strconv.FormatInt(d.pos, 10), nil
 }
 
@@ -240,6 +251,7 @@ func (d *fakeDB) Close() {}
 
 type fakeGateway struct {
 	w          *world
+	healthErr  error
 	holdErr    error
 	releaseErr error
 	routeErr   error  // returned for every route call
@@ -247,7 +259,7 @@ type fakeGateway struct {
 	routedTo   string // last successful route, guarded by w.mu
 }
 
-func (g *fakeGateway) Health(context.Context) error { g.w.record("gw.health"); return nil }
+func (g *fakeGateway) Health(context.Context) error { g.w.record("gw.health"); return g.healthErr }
 func (g *fakeGateway) HoldWrites(context.Context) error {
 	g.w.record("gw.hold")
 	return g.holdErr
@@ -338,7 +350,9 @@ type harness struct {
 	mu     sync.Mutex
 }
 
-func init() { demotionGrace, settleMin = 300*time.Millisecond, 20*time.Millisecond }
+func init() {
+	demotionGrace, settleMin, rollbackSlack = 300*time.Millisecond, 20*time.Millisecond, 2*time.Second
+}
 
 func newHarness(t *testing.T) *harness {
 	return &harness{w: newWorld(), p: testPlan(t, true), dir: t.TempDir()}

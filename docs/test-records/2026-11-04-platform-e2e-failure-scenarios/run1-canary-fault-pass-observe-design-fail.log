@@ -1,0 +1,209 @@
+== build (work dir C:/Users/SSAFY/Downloads/softbank/platform/.hopcharlie/e2e)
+go: downloading sigs.k8s.io/kind v0.33.0
+go: downloading github.com/spf13/pflag v1.0.5
+go: downloading github.com/mattn/go-isatty v0.0.20
+go: downloading github.com/pkg/errors v0.9.1
+go: downloading github.com/spf13/cobra v1.8.0
+go: downloading al.essio.dev/pkg/shellescape v1.5.1
+go: downloading github.com/pelletier/go-toml v1.9.5
+go: downloading sigs.k8s.io/yaml v1.4.0
+go: downloading github.com/BurntSushi/toml v1.4.0
+go: downloading github.com/evanphx/json-patch/v5 v5.6.0
+go: downloading github.com/inconshreveable/mousetrap v1.1.0
+== kind cluster hop-e2e, CNPG 1.25.1
+Creating cluster "hop-e2e" ...
+ • Ensuring node image (kindest/node:v1.37.0) 🖼️  ...
+ ✓ Ensuring node image (kindest/node:v1.37.0) 🖼️
+ • Preparing nodes 📦   ...
+ ✓ Preparing nodes 📦 
+ • Writing configuration 📜  ...
+ ✓ Writing configuration 📜
+ • Starting control-plane 🕹️  ...
+ ✓ Starting control-plane 🕹️
+ • Installing CNI 🔌  ...
+ ✓ Installing CNI 🔌
+ • Installing StorageClass 💾  ...
+ ✓ Installing StorageClass 💾
+Set kubectl context to "kind-hop-e2e"
+You can now use your cluster with:
+
+kubectl cluster-info --context kind-hop-e2e --kubeconfig C:/Users/SSAFY/Downloads/softbank/platform/.hopcharlie/e2e/kubeconfig
+
+Have a question, bug, or feature request? Let us know! https://kind.sigs.k8s.io/#community 🙂
+Set kubectl context to "kind-hop-e2e"
+Waiting for deployment spec update to be observed...
+Waiting for deployment spec update to be observed...
+Waiting for deployment "cnpg-controller-manager" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "cnpg-controller-manager" rollout to finish: 0 of 1 updated replicas are available...
+deployment "cnpg-controller-manager" successfully rolled out
+== source pg-src with seed data
+cluster.postgresql.cnpg.io/pg-src condition met
+pod/pg-src-1 condition met
+== platform store hop-e2e-store on 127.0.0.1:55652
+== test apps, gateway, platform API
+== scenario canary-fault (under load)
+16:36:17 load running through http://127.0.0.1:18000: 4 writers, 4 readers
+16:36:17 plan pln_d12fabd9d0fa submitted (agent), target.yaml 1609 bytes sha256 b371272c3386, revision 2
+16:36:17 plan approved (operator); run e2e-canary-fault-20261104-073617 started (scenario canary-fault) with canary [1 10 25 50 75 90 100] every 5s
+16:36:17  step_started   precheck   
+16:36:17  step_succeeded precheck   
+16:36:17  step_started   prepare    
+16:36:17  log            prepare    applying target manifest
+16:36:32    load: writes ok=1226 failed=0, reads ok=1316 notFound=0 failed=0
+16:36:47    load: writes ok=2328 failed=0, reads ok=2476 notFound=0 failed=0
+16:37:02    load: writes ok=3406 failed=0, reads ok=3636 notFound=0 failed=0
+16:37:13  step_succeeded prepare    
+16:37:13  step_started   presync    
+16:37:13  metric         presync    replication lag
+16:37:13  step_succeeded presync    
+16:37:13  step_started   delta      
+16:37:13  metric         delta      replication lag
+16:37:13  step_succeeded delta      
+16:37:13  status_changed            running (canary)
+16:37:13  canary_step               1% of reads to dst
+16:37:17    load: writes ok=4494 failed=0, reads ok=4792 notFound=0 failed=0
+16:37:18  gate_result               gate at 1% inconclusive: only 0 requests reached the target (need 20); continuing to the next step
+16:37:18  canary_step               10% of reads to dst
+16:37:18 FAULT injected on the target app: every read on the target answers 500
+16:37:23  gate_result               gate at 10% failed: error rate 100.00% is above 1.00%
+16:37:23  status_changed            rolled_back (canary)
+16:37:23  canary_step               all reads back on src
+16:37:23  status_changed            run ended: rolled_back
+== result (canary-fault)
+run            e2e-canary-fault-20261104-073617 status=rolled_back canary gate failed: error rate 100.00% is above 1.00%; all reads are back on the source
+fault          injected at 16:37:18
+canary   1%    inconclusive only 0 requests reached the target (need 20); continuing to the next step
+canary  10%    failed       error rate 100.00% is above 1.00%
+gateway        writeBackend=src readWeights=map[dst:0 src:100] writesHeld=false
+client writes  ok=5306 failed=0; longest gap without a successful write 210ms
+client reads   ok=5648 notFound=0 failed=0; by backend map[src:5648]
+recheck        5306 of 5306 acknowledged writes are on the source (primary again)
+driver wall    1m13s (load start to end)
+== E2E passed
+== scenario observe-rollback (under load)
+16:37:30 load running through http://127.0.0.1:18000: 4 writers, 4 readers
+16:37:30 plan pln_7569a7f2b450 submitted (agent), target.yaml 1609 bytes sha256 b371272c3386, revision 2
+16:37:30 plan approved (operator); run e2e-observe-rollback-20261104-073730 started (scenario observe-rollback) with canary [50 100] every 5s
+16:37:30  step_started   precheck   
+16:37:30  step_succeeded precheck   
+16:37:30  step_started   prepare    
+16:37:30  step_succeeded prepare    
+16:37:30  step_started   presync    
+16:37:30  metric         presync    replication lag
+16:37:30  step_succeeded presync    
+16:37:30  step_started   delta      
+16:37:30  metric         delta      replication lag
+16:37:30  step_succeeded delta      
+16:37:30  status_changed            running (canary)
+16:37:30  canary_step               50% of reads to dst
+16:37:35  gate_result               gate at 50% passed: 185 requests, error rate 0.00%, p95 3ms
+16:37:35  canary_step               100% of reads to dst
+16:37:40  gate_result               gate at 100% passed: 415 requests, error rate 0.00%, p95 2ms
+16:37:40  status_changed            running (cutover)
+16:37:40  step_started   fence      
+16:37:40  log            fence      writes held at gateway
+16:37:40  step_succeeded fence      
+16:37:40  step_started   switchover 
+16:37:40  log            switchover fence gate passed
+16:37:40  log            switchover source demotion requested
+16:37:42  log            switchover target promotion requested
+16:37:45    load: writes ok=884 failed=0, reads ok=1312 notFound=0 failed=0
+16:37:54  step_succeeded switchover 
+16:37:54  step_started   cutover    
+16:37:54  metric         cutover    write downtime
+16:37:54  step_succeeded cutover    
+16:37:54  log            verify     884 written records of stream e2e-observe-rollback are ready for verification
+16:37:54  step_started   verify     
+16:37:55  step_succeeded verify     
+16:37:55  step_started   finalize   
+16:37:55  step_succeeded finalize   
+16:37:55  done                      migration succeeded
+16:37:55  status_changed            running (observe)
+16:37:55 FAULT injected on the target app: every read on the target takes 1.2s
+16:38:00    load: writes ok=1298 failed=0, reads ok=2048 notFound=0 failed=0
+16:38:05  observe_step              observe ok: 769 requests, error rate 0.00%, p95 9ms
+16:38:15  observe_step              observe ok: 754 requests, error rate 0.00%, p95 24ms
+16:38:15    load: writes ok=2379 failed=0, reads ok=2096 notFound=0 failed=0
+16:38:25  observe_step              observe ok: 769 requests, error rate 0.00%, p95 9ms
+16:38:30    load: writes ok=3476 failed=0, reads ok=2144 notFound=0 failed=0
+16:38:35  observe_step              observe ok: 765 requests, error rate 0.00%, p95 9ms
+16:38:45  observe_step              observe ok: 768 requests, error rate 0.00%, p95 9ms
+16:38:45    load: writes ok=4570 failed=0, reads ok=2192 notFound=0 failed=0
+16:38:55  observe_step              observe ok: 691 requests, error rate 0.00%, p95 10ms
+16:38:55  status_changed            succeeded (observe)
+16:38:55  status_changed            run ended: succeeded
+16:39:00    load: writes ok=5666 failed=0, reads ok=2240 notFound=0 failed=0
+16:39:15    load: writes ok=6733 failed=0, reads ok=2288 notFound=0 failed=0
+16:39:30    load: writes ok=7830 failed=0, reads ok=2336 notFound=0 failed=0
+16:39:45    load: writes ok=8904 failed=0, reads ok=2384 notFound=0 failed=0
+16:40:00    load: writes ok=10001 failed=0, reads ok=2432 notFound=0 failed=0
+16:40:15    load: writes ok=11096 failed=0, reads ok=2480 notFound=0 failed=0
+FAIL: no automatic rollback run started within 90s
+== result (observe-rollback)
+run            e2e-observe-rollback-20261104-073730 status=succeeded 
+fault          injected at 16:37:55
+canary  50%    ok           185 requests, error rate 0.00%, p95 3ms
+canary 100%    ok           415 requests, error rate 0.00%, p95 2ms
+observe        ok           769 requests, error rate 0.00%, p95 9ms
+observe        ok           754 requests, error rate 0.00%, p95 24ms
+observe        ok           769 requests, error rate 0.00%, p95 9ms
+observe        ok           765 requests, error rate 0.00%, p95 9ms
+observe        ok           768 requests, error rate 0.00%, p95 9ms
+observe        ok           691 requests, error rate 0.00%, p95 10ms
+gateway        writeBackend=dst readWeights=map[dst:100 src:0] writesHeld=false
+client writes  ok=12153 failed=0; longest gap without a successful write 14.302s
+client reads   ok=2528 notFound=0 failed=0; by backend map[dst:2145 src:383]
+FAIL: observe did not report a violation
+FAIL: the automatic rollback run is none, want succeeded
+FAIL: traffic is not back on the source: {WriteBackend:dst ReadWeights:map[dst:100 src:0] WritesHeld:false}
+recheck        12153 of 12153 acknowledged writes are on the source (primary again)
+driver wall    3m2s (load start to end)
+== E2E FAILED
+== last lines of api.log
+{"time":"2026-11-04T16:36:14.7159808+09:00","level":"WARN","msg":"PLATFORM_RESIDENCY_POLICY_FILE is not set: residency gate disabled; migrations start without a data residency check"}
+{"time":"2026-11-04T16:36:14.7526235+09:00","level":"INFO","msg":"PLATFORM_CAPACITY_GATE is not on: migrations start without a capacity check"}
+{"time":"2026-11-04T16:36:14.7526235+09:00","level":"INFO","msg":"PostgreSQL major version gate enabled"}
+{"time":"2026-11-04T16:36:14.7625642+09:00","level":"WARN","msg":"PLATFORM_GITHUB_APP_ID is not set: registering apps from GitHub answers 503 github_not_configured"}
+{"time":"2026-11-04T16:36:14.7625642+09:00","level":"WARN","msg":"PLATFORM_GITHUB_WEBHOOK_SECRET is not set: the GitHub webhook answers 503 and pushes do not deploy"}
+{"time":"2026-11-04T16:36:14.7636432+09:00","level":"INFO","msg":"platform api listening","addr":"127.0.0.1:18080","tokens":2,"admins":0,"insecure":false,"gatewayURL":"http://127.0.0.1:19901","environments":["src","dst"]}
+== last lines of gateway.log
+{"time":"2026-11-04T16:36:14.2115703+09:00","level":"WARN","msg":"backend unhealthy","backend":"dst","err":"health check returned 503 Service Unavailable"}
+{"time":"2026-11-04T16:36:14.2062634+09:00","level":"INFO","msg":"gateway listening","listen":"127.0.0.1:18000","adminAddr":"127.0.0.1:19901","auth":true,"backends":["src=http://127.0.0.1:18101","dst=http://127.0.0.1:18102"],"stateFile":"C:/Users/SSAFY/Downloads/softbank/platform/.hopcharlie/e2e/gateway-state.json","appDomain":"e2e.test","defaultApp":"app"}
+{"time":"2026-11-04T16:37:12.2231821+09:00","level":"INFO","msg":"backend healthy","backend":"dst"}
+{"time":"2026-11-04T16:37:13.2821045+09:00","level":"INFO","msg":"admin action","action":"weights","readWeights":{"dst":1,"src":99},"previous":{"dst":0,"src":100}}
+{"time":"2026-11-04T16:37:18.2894331+09:00","level":"INFO","msg":"admin action","action":"weights","readWeights":{"dst":10,"src":90},"previous":{"dst":1,"src":99}}
+{"time":"2026-11-04T16:37:23.2969162+09:00","level":"INFO","msg":"admin action","action":"weights","readWeights":{"dst":0,"src":100},"previous":{"dst":10,"src":90}}
+{"time":"2026-11-04T16:37:30.6837123+09:00","level":"INFO","msg":"admin action","action":"weights","readWeights":{"dst":50,"src":50},"previous":{"dst":0,"src":100}}
+{"time":"2026-11-04T16:37:35.691582+09:00","level":"INFO","msg":"admin action","action":"weights","readWeights":{"dst":100,"src":0},"previous":{"dst":50,"src":50}}
+{"time":"2026-11-04T16:37:40.6982516+09:00","level":"INFO","msg":"admin action","action":"hold","changed":true,"hold":1,"result":"ok","inFlightAtHold":0,"drainMillis":4}
+{"time":"2026-11-04T16:37:42.210976+09:00","level":"WARN","msg":"backend unhealthy","backend":"src","err":"health check returned 503 Service Unavailable"}
+{"time":"2026-11-04T16:37:44.2212522+09:00","level":"INFO","msg":"backend healthy","backend":"src"}
+{"time":"2026-11-04T16:37:54.9734717+09:00","level":"INFO","msg":"admin action","action":"route","backend":"dst","previous":"src","writesHeld":true}
+{"time":"2026-11-04T16:37:54.9803448+09:00","level":"INFO","msg":"admin action","action":"release","changed":true,"backend":"dst","released":4,"heldMillis":14282,"dispatchMillis":4}
+== last lines of app-src.log
+2026/11/04 16:36:14 listening on 127.0.0.1:18101
+== last lines of app-dst.log
+2026/11/04 16:36:14 listening on 127.0.0.1:18102
+2026/11/04 16:37:18 fault set: status=500 delay=0ms method="GET"
+2026/11/04 16:37:28 fault cleared
+2026/11/04 16:37:49 select: FATAL: terminating connection due to administrator command (SQLSTATE 57P01)
+2026/11/04 16:37:49 select: FATAL: terminating connection due to administrator command (SQLSTATE 57P01)
+2026/11/04 16:37:49 select: FATAL: terminating connection due to administrator command (SQLSTATE 57P01)
+2026/11/04 16:37:49 select: FATAL: terminating connection due to administrator command (SQLSTATE 57P01)
+2026/11/04 16:37:49 select: failed to connect to `user=app database=app`: 127.0.0.1:55643 (127.0.0.1): server error: FATAL: the database system is shutting down (SQLSTATE 57P03)
+2026/11/04 16:37:49 select: failed to connect to `user=app database=app`: 127.0.0.1:55643 (127.0.0.1): server error: FATAL: the database system is shutting down (SQLSTATE 57P03)
+2026/11/04 16:37:49 select: failed to connect to `user=app database=app`: 127.0.0.1:55643 (127.0.0.1): server error: FATAL: the database system is shutting down (SQLSTATE 57P03)
+2026/11/04 16:37:49 select: failed to connect to `user=app database=app`: 127.0.0.1:55643 (127.0.0.1): server error: FATAL: the database system is shutting down (SQLSTATE 57P03)
+2026/11/04 16:37:49 select: failed to connect to `user=app database=app`: 127.0.0.1:55643 (127.0.0.1): tls error: EOF
+2026/11/04 16:37:49 select: failed to connect to `user=app database=app`: 127.0.0.1:55643 (127.0.0.1): tls error: EOF
+2026/11/04 16:37:49 select: failed to connect to `user=app database=app`: 127.0.0.1:55643 (127.0.0.1): tls error: EOF
+2026/11/04 16:37:49 select: failed to connect to `user=app database=app`: 127.0.0.1:55643 (127.0.0.1): tls error: EOF
+2026/11/04 16:37:49 select: failed to connect to `user=app database=app`: 127.0.0.1:55643 (127.0.0.1): server error: FATAL: the database system is starting up (SQLSTATE 57P03)
+2026/11/04 16:37:49 select: failed to connect to `user=app database=app`: 127.0.0.1:55643 (127.0.0.1): server error: FATAL: the database system is starting up (SQLSTATE 57P03)
+2026/11/04 16:37:49 select: failed to connect to `user=app database=app`: 127.0.0.1:55643 (127.0.0.1): server error: FATAL: the database system is starting up (SQLSTATE 57P03)
+2026/11/04 16:37:49 select: failed to connect to `user=app database=app`: 127.0.0.1:55643 (127.0.0.1): server error: FATAL: the database system is starting up (SQLSTATE 57P03)
+2026/11/04 16:37:55 fault set: status=0 delay=1200ms method="GET"
+== wall time 426s
+KEEP=1: still running, logs in C:/Users/SSAFY/Downloads/softbank/platform/.hopcharlie/e2e. Remove with test/e2e/down.sh
+
+[exited with code 1]

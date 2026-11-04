@@ -332,7 +332,7 @@ func (e *Engine) onFailure(step string, cause error) error {
 	e.mu.Unlock()
 
 	// A fresh context: the caller's may already be cancelled (e.g. Ctrl-C).
-	ctx, cancel := context.WithTimeout(context.Background(), 2*e.plan.Thresholds.SwitchoverTimeout.Duration+demotionGrace+time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*e.plan.Thresholds.SwitchoverTimeout.Duration+demotionGrace+rollbackSlack)
 	defer cancel()
 
 	switch {
@@ -376,6 +376,10 @@ func (e *Engine) onFailure(step string, cause error) error {
 // demotionGrace is how much longer than switchoverTimeout a rollback waits for
 // an in-flight demotion to finish. A variable so tests can shorten it.
 var demotionGrace = 30 * time.Second
+
+// rollbackSlack is the rollback's time beyond the demotion wait: re-promotion,
+// settling and the gateway calls. A variable so tests can shorten it.
+var rollbackSlack = time.Minute
 
 // rollback restores the source as primary and releases held writes to it.
 // Only valid while the target has not been asked to promote.

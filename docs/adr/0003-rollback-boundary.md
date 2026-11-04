@@ -28,3 +28,8 @@
 - 콘솔과 CLI는 `rolled_back`, `halted`, `failed`를 따로 보여 줘야 한다. `halted`를 원복 성공으로 보이면 안 된다.
 - `halted`에서는 게이트웨이가 쓰기를 계속 붙잡고 있을 수 있다. 게이트웨이의 최대 보류 시간(platform ADR 0004)이 사용자를 보호하고, 운영자가 run을 재개하거나 직접 해제한다.
 - 테스트에서 실패 지점 아홉 곳이 각각 기대한 결과로 끝나는지 확인한다. 경계를 일부러 틀리게 바꾼 버그 네 가지를 테스트가 모두 잡는 것도 확인했다.
+
+## 보완 (2026-11-04): 적용되지 않은 강등 요청, 단계별 실패 지점 확대
+
+- 강등 요청 전에 `SourceDemoted`를 먼저 기록하는 것은 그대로다. 시간 초과된 요청도 실제로는 적용됐을 수 있기 때문이다. 다만 요청이 오류로 끝났고 원본이 여전히 자기 자신을 primary로 가리키며 새 강등 토큰도 없으면, CNPG가 강등을 시작하지 않은 것이다. 이때는 `SourceDemoted`를 되돌려 원복이 토큰을 기다리지 않고 바로 쓰기를 원본에 푼다. 전에는 오지 않을 토큰을 기다리다 `halted`가 되어, 아무것도 바뀌지 않았는데 운영자를 불렀다(`TestDemotionRequestFailureRollsBack`).
+- 실패 지점 테스트를 단계마다 넓혔다. precheck(원본이 primary가 아님, 원본 DB가 recovery, DB 접속 불가, 게이트웨이 비정상, self 이름 충돌, 대상도 manifest도 없음), prepare(manifest 적용 거부, 대상이 healthy가 안 됨, 대상이 쓰기 가능), presync(지연이 안 줄어듦, 지연 측정의 일시적 오류는 재시도), delta(파일 동기화 실패는 쓰기 보류 전), fence(보류 뒤 fence LSN을 못 읽으면 원본에 해제), switchover(대상이 fence LSN을 못 따라옴, 승격 요청 실패는 halted, 승격된 대상이 안정되지 않으면 halted), cutover(경로 변경 뒤 해제 실패는 halted), verify(옛 원본이 replica로 안 돌아옴은 halted), 원복(경로 복귀 실패, 다시 승격한 원본이 안정되지 않으면 halted이고 쓰기는 보류 유지).

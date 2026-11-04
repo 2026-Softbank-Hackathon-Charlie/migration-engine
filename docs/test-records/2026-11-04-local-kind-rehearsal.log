@@ -1,0 +1,58 @@
+== setup (work dir C:/Users/SSAFY/AppData/Local/Temp/claude/C--Users-SSAFY-Downloads-softbank/d60a5f00-7cdd-4424-acf5-f835e4858765/scratchpad/rehearsal)
+go: downloading golang.org/x/term v0.45.0
+go: downloading golang.org/x/text v0.41.0
+go: downloading golang.org/x/sync v0.22.0
+go: downloading golang.org/x/net v0.57.0
+go: downloading golang.org/x/oauth2 v0.36.0
+go: downloading golang.org/x/sys v0.47.0
+Creating cluster "hop" ...
+ • Ensuring node image (kindest/node:v1.32.2) 🖼  ...
+ ✓ Ensuring node image (kindest/node:v1.32.2) 🖼
+ • Preparing nodes 📦   ...
+ ✓ Preparing nodes 📦 
+ • Writing configuration 📜  ...
+ ✓ Writing configuration 📜
+ • Starting control-plane 🕹️  ...
+ ✓ Starting control-plane 🕹️
+ • Installing CNI 🔌  ...
+ ✓ Installing CNI 🔌
+ • Installing StorageClass 💾  ...
+ ✓ Installing StorageClass 💾
+Set kubectl context to "kind-hop"
+You can now use your cluster with:
+
+kubectl cluster-info --context kind-hop --kubeconfig C:/Users/SSAFY/AppData/Local/Temp/claude/C--Users-SSAFY-Downloads-softbank/d60a5f00-7cdd-4424-acf5-f835e4858765/scratchpad/rehearsal/kubeconfig
+
+Have a question, bug, or feature request? Let us know! https://kind.sigs.k8s.io/#community 🙂
+Set kubectl context to "kind-hop"
+Waiting for deployment spec update to be observed...
+Waiting for deployment spec update to be observed...
+Waiting for deployment "cnpg-controller-manager" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "cnpg-controller-manager" rollout to finish: 0 of 1 updated replicas are available...
+deployment "cnpg-controller-manager" successfully rolled out
+cluster.postgresql.cnpg.io/pg-src condition met
+pod/pg-src-1 condition met
+== 1. migrate pg-src -> pg-dst
+   15:38:53.538   cutover write downtime downtimeMillis=8771
+   15:38:53.669 ★ migration succeeded downtimeMillis=8771
+   OK   outcome=succeeded
+   OK   primary=pg-dst(f) replica=pg-src(t,streaming) write-replicated=1 applogin=ok/ok
+== 2. back, but switchover times out right after demotion -> rolled back
+   15:38:59.860 ✘ switchover: waiting for demotion token: context deadline exceeded
+   15:38:59.860 ! switchover [rollback] rolling back to source 
+   15:39:27.984 ! switchover [rollback] rolled back; source is primary and serving traffic 
+   OK   outcome=rolled_back
+   OK   primary=pg-dst(f) replica=pg-src(t,streaming) write-replicated=1 applogin=ok/ok
+== 3. migrate pg-dst -> pg-src
+   15:39:45.418   cutover write downtime downtimeMillis=9705
+   15:39:45.493 ★ migration succeeded downtimeMillis=9705
+   OK   outcome=succeeded
+   OK   primary=pg-src(f) replica=pg-dst(t,streaming) write-replicated=1 applogin=ok/ok
+== 4. migrate pg-src -> pg-dst again (old demotion token in status)
+   15:40:10.757   cutover write downtime downtimeMillis=20256
+   15:40:10.833 ★ migration succeeded downtimeMillis=20256
+   OK   outcome=succeeded
+   OK   primary=pg-dst(f) replica=pg-src(t,streaming) write-replicated=1 applogin=ok/ok
+== all scenarios passed
+
+[exited with code 0]

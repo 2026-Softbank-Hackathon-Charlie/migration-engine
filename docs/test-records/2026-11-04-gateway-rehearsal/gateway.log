@@ -1,0 +1,15 @@
+{"time":"2026-11-04T16:08:30.1432022+09:00","level":"WARN","msg":"backend unhealthy","backend":"src","err":"Get \"http://127.0.0.1:55590/healthz\": dial tcp 127.0.0.1:55590: connectex: No connection could be made because the target machine actively refused it."}
+{"time":"2026-11-04T16:08:30.140556+09:00","level":"INFO","msg":"gateway listening","listen":"127.0.0.1:55580","adminAddr":"127.0.0.1:55581","auth":false,"backends":["src=http://127.0.0.1:55590","dst=http://127.0.0.1:55591"],"stateFile":"C:/Users/SSAFY/AppData/Local/Temp/claude/C--Users-SSAFY-Downloads-softbank/d60a5f00-7cdd-4424-acf5-f835e4858765/scratchpad/gw-rehearsal/gateway-state.json","appDomain":"","defaultApp":"app"}
+{"time":"2026-11-04T16:08:30.1432022+09:00","level":"WARN","msg":"backend unhealthy","backend":"dst","err":"Get \"http://127.0.0.1:55591/healthz\": dial tcp 127.0.0.1:55591: connectex: No connection could be made because the target machine actively refused it."}
+{"time":"2026-11-04T16:08:32.1426722+09:00","level":"INFO","msg":"backend healthy","backend":"src"}
+{"time":"2026-11-04T16:09:08.7765399+09:00","level":"INFO","msg":"admin action","action":"hold","changed":true,"hold":1,"result":"ok","inFlightAtHold":1,"drainMillis":3}
+{"time":"2026-11-04T16:09:10.1523789+09:00","level":"INFO","msg":"backend healthy","backend":"dst"}
+{"time":"2026-11-04T16:09:16.1492001+09:00","level":"WARN","msg":"backend unhealthy","backend":"dst","err":"health check returned 503 Service Unavailable"}
+{"time":"2026-11-04T16:09:18.16506+09:00","level":"INFO","msg":"backend healthy","backend":"dst"}
+{"time":"2026-11-04T16:09:22.0610855+09:00","level":"INFO","msg":"admin action","action":"route","backend":"dst","previous":"src","writesHeld":true}
+{"time":"2026-11-04T16:09:22.0788709+09:00","level":"INFO","msg":"admin action","action":"release","changed":true,"backend":"dst","released":2,"heldMillis":13291,"dispatchMillis":14}
+{"time":"2026-11-04T16:09:35.9101578+09:00","level":"INFO","msg":"admin action","action":"hold","changed":true,"hold":2,"result":"ok","inFlightAtHold":0,"drainMillis":8}
+{"time":"2026-11-04T16:10:02.8523097+09:00","level":"INFO","msg":"admin action","action":"route","backend":"dst","previous":"dst","writesHeld":true}
+{"time":"2026-11-04T16:10:02.8608908+09:00","level":"INFO","msg":"admin action","action":"release","changed":true,"backend":"dst","released":2,"heldMillis":26951,"dispatchMillis":7}
+{"time":"2026-11-04T16:10:08.1420906+09:00","level":"WARN","msg":"backend unhealthy","backend":"dst","err":"health check returned 503 Service Unavailable"}
+{"time":"2026-11-04T16:10:10.1449883+09:00","level":"INFO","msg":"backend healthy","backend":"dst"}

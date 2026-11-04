@@ -35,6 +35,7 @@ type world struct {
 	targetNeverWakes bool // target stays in recovery after promotion
 	connectErr       error
 	restartGets      int // target cluster is unhealthy for this many Gets after promotion
+	srcRestartGets   int // source cluster is unhealthy for this many Gets after a rollback re-promotes it
 	sourceDownCalls  int // old source is unreachable for this many calls after cutover
 
 	calls []string // ordered log of every side effect, for order assertions
@@ -113,6 +114,14 @@ func (c *fakeCluster) Get(context.Context) (*cnpg.Status, error) {
 			c.w.calls = append(c.w.calls, "dst.restart done")
 		}
 	}
+	if c.role == "src" && c.w.srcRestartGets > 0 && c.st.Phase != cnpg.HealthyPhase {
+		c.w.srcRestartGets--
+		if c.w.srcRestartGets == 0 {
+			c.st.Phase = cnpg.HealthyPhase
+			c.w.srcDB.pendingRestart = false
+			c.w.calls = append(c.w.calls, "src.restart done")
+		}
+	}
 	if c.role == "src" && c.w.tokenAfter > 0 && !c.w.demotedAt.IsZero() && c.st.ReplicaPrimary != c.st.Self &&
 		time.Since(c.w.demotedAt) >= c.w.tokenAfter {
 		c.st.DemotionToken = "tok-" + strconv.FormatInt(c.w.srcDB.pos, 10)
@@ -148,6 +157,10 @@ func (c *fakeCluster) SetPrimary(_ context.Context, primary, token string) error
 	case c.role == "src" && primary == c.st.Self: // re-promote (rollback)
 		w.srcDB.recovery = false
 		c.st.DemotionToken = ""
+		if w.srcRestartGets > 0 {
+			c.st.Phase = "Primary instance is being restarted in-place"
+			w.srcDB.pendingRestart = true
+		}
 	case c.role == "dst" && primary == c.st.Self && token != "": // promote with token
 		if !w.targetNeverWakes {
 			w.dstDB.recovery = false

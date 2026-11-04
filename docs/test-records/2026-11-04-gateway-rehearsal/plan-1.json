@@ -1,0 +1,11 @@
+{
+  "id": "gw-src-to-dst",
+  "source": {"env": "src", "context": "kind-hopgw", "namespace": "hop", "cluster": "pg-src",
+             "dsn": "postgres://***@127.0.0.1:55552/app?sslmode=require"},
+  "target": {"env": "dst", "context": "kind-hopgw", "namespace": "hop", "cluster": "pg-dst",
+             "dsn": "postgres://***@127.0.0.1:55553/app?sslmode=require",
+             "manifest": "test/rehearsal/target.yaml"},
+  "gateway": {"mode": "http", "url": "http://127.0.0.1:55581", "sourceBackend": "src", "targetBackend": "dst"},
+  "verify": {"schemas": ["public"], "fenceGate": true, "writtenRecords": "C:/Users/SSAFY/AppData/Local/Temp/claude/C--Users-SSAFY-Downloads-softbank/d60a5f00-7cdd-4424-acf5-f835e4858765/scratchpad/gw-rehearsal/written.jsonl"},
+  "thresholds": {"maxLagBytes": 1048576, "catchupTimeout": "10m", "switchoverTimeout": "3m", "maxDowntime": "3m"}
+}

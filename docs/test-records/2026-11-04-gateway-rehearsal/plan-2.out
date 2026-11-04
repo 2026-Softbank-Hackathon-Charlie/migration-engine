@@ -1,0 +1,22 @@
+run gw-dst-to-src-timeout-20261104-070932 (state: .hopcharlie\runs\gw-dst-to-src-timeout-20261104-070932.json)
+16:09:32.641 ▶ precheck
+16:09:35.825 ✔ precheck (3168 ms)
+16:09:35.831 ▶ prepare
+16:09:35.872 ✔ prepare (44 ms)
+16:09:35.875 ▶ presync
+16:09:35.885   presync replication lag lagBytes=0 sourceLsn=0/6016BA8 targetLsn=0/6016BA8
+16:09:35.887 ✔ presync (12 ms)
+16:09:35.890 ▶ delta
+16:09:35.895   delta replication lag lagBytes=0 sourceLsn=0/6016BA8 targetLsn=0/6016BA8
+16:09:35.897 ✔ delta (7 ms)
+16:09:35.900 ▶ fence
+16:09:35.912   fence writes held at gateway 
+16:09:35.918 ✔ fence (18 ms)
+16:09:35.920 ▶ switchover
+16:09:35.935   switchover fence gate passed tables=1
+16:09:35.975   switchover source demotion requested newPrimary=pg-src
+16:09:36.222 ✘ switchover: waiting for demotion token: context deadline exceeded
+16:09:36.222 ! switchover [rollback] rolling back to source 
+16:09:38.263   switchover re-promoting source primary=pg-dst
+16:10:02.866 ! switchover [rollback] rolled back; source is primary and serving traffic 
+error: rolled back after switchover: waiting for demotion token: context deadline exceeded

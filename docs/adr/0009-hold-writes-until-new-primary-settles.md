@@ -31,3 +31,7 @@
 - 쓰기 다운타임은 재시작 시간만큼 늘었다. `smartShutdownTimeout`이 길면 다운타임도 그만큼 길어진다.
 - 대상의 재시작이 끝나지 않으면 switchover가 `switchoverTimeout`에서 실패하고, 승격 뒤라 `halted`가 된다(0003).
 - 원본을 먼저 읽는 순서는 원본이 대상을 따라가는 경우만 바로잡는다. 대상에서 행이 지워지는 경우는 여전히 누락으로 잡힌다.
+
+## 보완 (2026-11-04): 원복도 같은 재시작을 기다린다
+
+원복은 원본을 다시 승격하는데, 그 뒤에는 쓰기 가능해지는 것(`waitWritable`)만 기다리고 쓰기를 풀었다. 게이트웨이 리허설(`test/gateway-rehearsal`, CNPG 1.30.1, 부하 약 20 req/s)에서 원복 완료 기록 5초 뒤 CNPG가 다시 승격된 원본을 제자리 재시작했고(`the database system is shutting down` → `starting up`), 그 0.35초 사이의 쓰기 8건이 503으로 실패했다(`docs/test-records/README.md`). 원복도 다시 승격한 뒤 정방향과 같은 `waitSettled`(healthy, 쓰기 가능, `pending_restart` 없음이 두 번 연속, 최소 3초)를 지나야 경로를 원본으로 돌리고 쓰기를 푼다. 쓰기 다운타임은 그만큼 길어진다.

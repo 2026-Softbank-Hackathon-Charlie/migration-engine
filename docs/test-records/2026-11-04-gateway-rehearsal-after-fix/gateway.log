@@ -1,0 +1,11 @@
+{"time":"2026-11-04T16:15:28.9662722+09:00","level":"WARN","msg":"backend unhealthy","backend":"dst","err":"health check returned 503 Service Unavailable"}
+{"time":"2026-11-04T16:15:28.9609242+09:00","level":"INFO","msg":"gateway listening","listen":"127.0.0.1:55580","adminAddr":"127.0.0.1:55581","auth":false,"backends":["src=http://127.0.0.1:55590","dst=http://127.0.0.1:55591"],"stateFile":"C:/Users/SSAFY/AppData/Local/Temp/claude/C--Users-SSAFY-Downloads-softbank/d60a5f00-7cdd-4424-acf5-f835e4858765/scratchpad/gw-rehearsal-2/gateway-state.json","appDomain":"","defaultApp":"app"}
+{"time":"2026-11-04T16:16:08.977486+09:00","level":"INFO","msg":"backend healthy","backend":"dst"}
+{"time":"2026-11-04T16:16:09.854186+09:00","level":"INFO","msg":"admin action","action":"hold","changed":true,"hold":1,"result":"ok","inFlightAtHold":0,"drainMillis":6}
+{"time":"2026-11-04T16:16:10.9689505+09:00","level":"WARN","msg":"backend unhealthy","backend":"src","err":"health check returned 503 Service Unavailable"}
+{"time":"2026-11-04T16:16:12.9752362+09:00","level":"INFO","msg":"backend healthy","backend":"src"}
+{"time":"2026-11-04T16:16:23.1090248+09:00","level":"INFO","msg":"admin action","action":"route","backend":"dst","previous":"src","writesHeld":true}
+{"time":"2026-11-04T16:16:23.1171629+09:00","level":"INFO","msg":"admin action","action":"release","changed":true,"backend":"dst","released":2,"heldMillis":13263,"dispatchMillis":5}
+{"time":"2026-11-04T16:16:33.6429473+09:00","level":"INFO","msg":"admin action","action":"hold","changed":true,"hold":2,"result":"ok","inFlightAtHold":0,"drainMillis":7}
+{"time":"2026-11-04T16:17:11.2051434+09:00","level":"INFO","msg":"admin action","action":"route","backend":"dst","previous":"dst","writesHeld":true}
+{"time":"2026-11-04T16:17:11.211637+09:00","level":"INFO","msg":"admin action","action":"release","changed":true,"backend":"dst","released":2,"heldMillis":37570,"dispatchMillis":5}

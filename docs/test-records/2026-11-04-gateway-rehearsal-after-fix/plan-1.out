@@ -1,0 +1,28 @@
+run gw-src-to-dst-20261104-071539 (state: .hopcharlie\runs\gw-src-to-dst-20261104-071539.json)
+16:15:39.732 ▶ precheck
+16:15:39.777 ✔ precheck (44 ms)
+16:15:39.778 ▶ prepare
+16:15:39.781   prepare applying target manifest manifest=test/rehearsal/target.yaml
+16:16:09.824 ✔ prepare (30045 ms)
+16:16:09.826 ▶ presync
+16:16:09.836   presync replication lag lagBytes=0 sourceLsn=0/400FEF0 targetLsn=0/400FEF0
+16:16:09.838 ✔ presync (12 ms)
+16:16:09.840 ▶ delta
+16:16:09.843   delta replication lag lagBytes=0 sourceLsn=0/400FEF0 targetLsn=0/400FEF0
+16:16:09.845 ✔ delta (4 ms)
+16:16:09.847 ▶ fence
+16:16:09.856   fence writes held at gateway 
+16:16:09.861 ✔ fence (13 ms)
+16:16:09.863 ▶ switchover
+16:16:09.876   switchover fence gate passed tables=1
+16:16:09.925   switchover source demotion requested newPrimary=pg-dst
+16:16:10.949   switchover target promotion requested oldPrimary=pg-src
+16:16:23.099 ✔ switchover (13236 ms)
+16:16:23.100 ▶ cutover
+16:16:23.119   cutover write downtime downtimeMillis=13262
+16:16:23.121 ✔ cutover (20 ms)
+16:16:23.124 ▶ verify
+16:16:23.166 ✔ verify (42 ms)
+16:16:23.168 ▶ finalize
+16:16:23.177 ✔ finalize (9 ms)
+16:16:23.179 ★ migration succeeded downtimeMillis=13262

@@ -412,6 +412,24 @@ func TestWritesHeldUntilPromotedTargetSettles(t *testing.T) {
 	assertOrder(t, h.w.Calls(), `dst.setPrimary db-eks token="tok-1000"`, "dst.restart done", "gw.route eks", "gw.release")
 }
 
+// A rollback re-promotes the source, and CNPG restarts it in place the same
+// way it restarts a promoted target (seen in the gateway rehearsal: writes
+// released right after the re-promotion failed with "the database system is
+// shutting down"). Held writes must wait for that restart too.
+func TestRollbackHoldsWritesUntilSourceSettles(t *testing.T) {
+	h := newHarness(t)
+	h.w.tokenAfter = 1200 * time.Millisecond
+	h.w.srcRestartGets = 5
+	e := h.engine(t, "")
+	if err := e.Run(context.Background()); err == nil {
+		t.Fatal("expected a rollback")
+	}
+	if got := e.State().Outcome; got != OutcomeRolledBack {
+		t.Fatalf("outcome %q, want rolled_back", got)
+	}
+	assertOrder(t, h.w.Calls(), `src.setPrimary db-gke token="tok-1000"`, "src.restart done", "gw.route gke", "gw.release")
+}
+
 // The old source restarts as a replica after demotion. A connection error
 // while it does must not fail verification (which would halt the run).
 func TestVerifyWaitsForOldSourceRestart(t *testing.T) {

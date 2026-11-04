@@ -1,0 +1,64 @@
+== setup (work dir C:/Users/SSAFY/AppData/Local/Temp/claude/C--Users-SSAFY-Downloads-softbank/d60a5f00-7cdd-4424-acf5-f835e4858765/scratchpad/gw-rehearsal, CNPG 1.30.1)
+   platform gateway from 0b218b7, engine 6ef0a64
+Creating cluster "hopgw" ...
+ • Ensuring node image (kindest/node:v1.32.2) 🖼  ...
+ ✓ Ensuring node image (kindest/node:v1.32.2) 🖼
+ • Preparing nodes 📦   ...
+ ✓ Preparing nodes 📦 
+ • Writing configuration 📜  ...
+ ✓ Writing configuration 📜
+ • Starting control-plane 🕹️  ...
+ ✓ Starting control-plane 🕹️
+ • Installing CNI 🔌  ...
+ ✓ Installing CNI 🔌
+ • Installing StorageClass 💾  ...
+ ✓ Installing StorageClass 💾
+Set kubectl context to "kind-hopgw"
+You can now use your cluster with:
+
+kubectl cluster-info --context kind-hopgw --kubeconfig C:/Users/SSAFY/AppData/Local/Temp/claude/C--Users-SSAFY-Downloads-softbank/d60a5f00-7cdd-4424-acf5-f835e4858765/scratchpad/gw-rehearsal/kubeconfig
+
+Thanks for using kind! 😊
+Set kubectl context to "kind-hopgw"
+Waiting for deployment "cnpg-controller-manager" rollout to finish: 0 of 1 updated replicas are available...
+deployment "cnpg-controller-manager" successfully rolled out
+cluster.postgresql.cnpg.io/pg-src condition met
+pod/pg-src-1 condition met
+   source: 18.6 (Debian 18.6-1.pgdg13+2)
+   app through gateway: {"db":"pg-src","hello":"world","inRecovery":false,"instance":"hello-src","visits":1}
+== 1. src -> dst under load
+   16:09:22.082   cutover write downtime downtimeMillis=13302
+   16:09:22.162 ★ migration succeeded downtimeMillis=13302
+   OK   outcome=succeeded
+   gateway state: {"backends":[{"healthy":true,"lastCheck":"2026-11-04T07:09:22.1451772Z","name":"src","url":"http://127.0.0.1:55590"},{"healthy":true,"lastCheck":"2026-11-04T07:09:22.143525Z","name":"dst","url":"http://127.0.0.1:55591"}],"heldWrites":0,"inFlight":{"reads":0,"writes":1},"maxHold":"55s","readWeights":{"dst":100,"src":0},"stats":{"dst":{"errorRate":0,"errors":0,"p50Millis":8.125,"p95Millis":24.5,"p99Millis":28.9,"requests":11,"rps":1.0486746,"windowSeconds":10},"src":{"errorRate":0,"errors":0,"p50Millis":0,"p95Millis":0,"p99Millis":0,"requests":0,"rps":0,"windowSeconds":10}},"totals":{"dst":{"errors":0,"requests":11,"retried":0},"src":{"errors":0,"requests":756,"retried":0}},"updatedAt":"2026-11-04T07:09:22.489431Z","writeBackend":"dst","writesHeld":false}
+   app: {"db":"pg-dst","hello":"world","inRecovery":false,"instance":"hello-dst","visits":767}
+== 2. dst -> src, switchover times out -> rolled back
+   16:09:36.222 ! switchover [rollback] rolling back to source 
+   16:10:02.866 ! switchover [rollback] rolled back; source is primary and serving traffic 
+   OK   outcome=rolled_back
+   gateway state: {"backends":[{"healthy":true,"lastCheck":"2026-11-04T07:10:02.1436897Z","name":"src","url":"http://127.0.0.1:55590"},{"healthy":true,"lastCheck":"2026-11-04T07:10:02.1436897Z","name":"dst","url":"http://127.0.0.1:55591"}],"heldWrites":0,"inFlight":{"reads":0,"writes":0},"maxHold":"55s","readWeights":{"dst":100,"src":0},"stats":{"dst":{"errorRate":0,"errors":0,"p50Millis":6.3333335,"p95Millis":25,"p99Millis":29,"requests":10,"rps":0.9763402,"windowSeconds":10},"src":{"errorRate":0,"errors":0,"p50Millis":0,"p95Millis":0,"p99Millis":0,"requests":0,"rps":0,"windowSeconds":10}},"totals":{"dst":{"errors":0,"requests":206,"retried":0},"src":{"errors":0,"requests":756,"retried":0}},"updatedAt":"2026-11-04T07:10:03.2423318Z","writeBackend":"dst","writesHeld":false}
+   app: {"db":"pg-dst","hello":"world","inRecovery":false,"instance":"hello-dst","visits":962}
+== 3. writes
+   {
+     "failed": 8,
+     "latencyMs": {
+       "max": 26906,
+       "p50": 5,
+       "p99": 420
+     },
+     "ok": 1155,
+     "statuses": {
+       "200": 1155,
+       "503": 8
+     },
+     "total": 1163,
+     "writesByDB": {
+       "pg-dst": 401,
+       "pg-src": 754
+     }
+   }   primary=pg-dst visits rows=1156, 2xx answers=1155, missing on primary=0, failed requests=8
+   OK   no acknowledged write is missing
+   WARN 8 requests failed (see requests.jsonl)
+== all scenarios passed
+
+[exited with code 0]

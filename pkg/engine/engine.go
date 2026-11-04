@@ -409,6 +409,14 @@ func (e *Engine) rollback(ctx context.Context) error {
 		if err := e.waitWritable(ctx, e.plan.Source.DSN, &e.srcDB); err != nil {
 			return fmt.Errorf("source did not become writable again: %w", err)
 		}
+		// CNPG restarts a re-promoted source in place just as it restarts a
+		// promoted target (ADR 0009); releasing writes before that restart
+		// sends them to a primary that is shutting down.
+		start := time.Now()
+		if err := e.waitSettled(ctx, e.src, e.plan.Source.DSN, &e.srcDB); err != nil {
+			return fmt.Errorf("source did not settle after re-promotion: %w", err)
+		}
+		e.log(StepSwitchover, "source settled", map[string]any{"settleMillis": time.Since(start).Milliseconds()})
 		e.mu.Lock()
 		e.state.SourceDemoted = false
 		e.mu.Unlock()

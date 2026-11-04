@@ -240,6 +240,14 @@ func (e *Engine) switchover(ctx context.Context) (map[string]any, error) {
 	e.tokenBeforeDemote = srcS.DemotionToken
 	e.setFlags(func(s *State) { s.SourceDemoted = true })
 	if err := e.src.SetPrimary(tctx, dstS.Self, ""); err != nil {
+		// The flag is set before the request because a request that times out
+		// may still have been applied. When the source still names itself as
+		// primary the request was not applied and CNPG never started demoting:
+		// the rollback can release writes on it without waiting for a token.
+		if s, gerr := e.src.Get(ctx); gerr == nil && s.IsPrimary() && s.DemotionToken == e.tokenBeforeDemote {
+			e.setFlags(func(s *State) { s.SourceDemoted = false })
+			ev["demotionApplied"] = false
+		}
 		return ev, fmt.Errorf("demote source: %w", err)
 	}
 	e.log(StepSwitchover, "source demotion requested", map[string]any{"newPrimary": dstS.Self})

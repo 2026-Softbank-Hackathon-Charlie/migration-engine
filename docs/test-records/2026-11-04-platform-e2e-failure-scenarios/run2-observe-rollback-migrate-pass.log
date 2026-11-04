@@ -1,0 +1,189 @@
+== build (work dir C:/Users/SSAFY/Downloads/softbank/platform/.hopcharlie/e2e)
+== kind cluster hop-e2e, CNPG 1.25.1
+Set kubectl context to "kind-hop-e2e"
+deployment "cnpg-controller-manager" successfully rolled out
+== source pg-src with seed data
+cluster.postgresql.cnpg.io/pg-src condition met
+pod/pg-src-1 condition met
+== platform store hop-e2e-store on 127.0.0.1:55652
+== test apps, gateway, platform API
+== scenario observe-rollback (under load)
+16:42:08 load running through http://127.0.0.1:18000: 4 writers, 4 readers
+16:42:08 plan pln_53d03b36c090 submitted (agent), target.yaml 1609 bytes sha256 b371272c3386, revision 2
+16:42:08 plan approved (operator); run e2e-observe-rollback-20261104-074208 started (scenario observe-rollback) with canary [50 100] every 5s
+16:42:08  step_started   precheck   
+16:42:08  step_succeeded precheck   
+16:42:08  step_started   prepare    
+16:42:08  log            prepare    applying target manifest
+16:42:23    load: writes ok=1203 failed=0, reads ok=1296 notFound=0 failed=0
+16:42:38    load: writes ok=2297 failed=0, reads ok=2456 notFound=0 failed=0
+16:42:53    load: writes ok=3348 failed=0, reads ok=3604 notFound=0 failed=0
+16:43:04  step_succeeded prepare    
+16:43:04  step_started   presync    
+16:43:04  metric         presync    replication lag
+16:43:04  step_succeeded presync    
+16:43:04  step_started   delta      
+16:43:04  metric         delta      replication lag
+16:43:04  step_succeeded delta      
+16:43:04  status_changed            running (canary)
+16:43:04  canary_step               50% of reads to dst
+16:43:08    load: writes ok=4421 failed=0, reads ok=4752 notFound=0 failed=0
+16:43:09  gate_result               gate at 50% passed: 193 requests, error rate 0.00%, p95 3ms
+16:43:09  canary_step               100% of reads to dst
+16:43:14  gate_result               gate at 100% passed: 400 requests, error rate 0.00%, p95 2ms
+16:43:14  status_changed            running (cutover)
+16:43:14  step_started   fence      
+16:43:14  log            fence      writes held at gateway
+16:43:14  step_succeeded fence      
+16:43:14  step_started   switchover 
+16:43:14  log            switchover fence gate passed
+16:43:14  log            switchover source demotion requested
+16:43:15  log            switchover target promotion requested
+16:43:23    load: writes ok=4869 failed=0, reads ok=5896 notFound=0 failed=0
+16:43:27  step_succeeded switchover 
+16:43:27  step_started   cutover    
+16:43:27  metric         cutover    write downtime
+16:43:27  step_succeeded cutover    
+16:43:27  log            verify     4869 written records of stream e2e-observe-rollback are ready for verification
+16:43:27  step_started   verify     
+16:43:27  step_succeeded verify     
+16:43:27  step_started   finalize   
+16:43:27  step_succeeded finalize   
+16:43:27  done                      migration succeeded
+16:43:27  status_changed            running (observe)
+16:43:27 FAULT injected on the target app: every request on the target takes 1.2s
+16:43:37  observe_step              observe violated: p95 1439ms is above 800ms
+16:43:37  status_changed            succeeded (observe)
+16:43:37  status_changed            run ended: succeeded
+16:43:38    load: writes ok=4917 failed=0, reads ok=6284 notFound=0 failed=0
+16:43:38 automatic rollback run e2e-observe-rollback-rollback-20261104-074337 started; watching it
+16:43:37  rollback step_started   precheck   
+16:43:37  rollback step_succeeded precheck   
+16:43:37  rollback step_started   prepare    
+16:43:38  rollback step_succeeded prepare    
+16:43:38  rollback step_started   presync    
+16:43:38  rollback metric         presync    replication lag
+16:43:38  rollback step_succeeded presync    
+16:43:38  rollback step_started   delta      
+16:43:38  rollback metric         delta      replication lag
+16:43:38  rollback step_succeeded delta      
+16:43:38  rollback status_changed            running (cutover)
+16:43:38  rollback step_started   fence      
+16:43:39  rollback log            fence      writes held at gateway
+16:43:39  rollback step_succeeded fence      
+16:43:39  rollback step_started   switchover 
+16:43:39  rollback log            switchover fence gate passed
+16:43:39  rollback log            switchover source demotion requested
+16:43:41  rollback log            switchover target promotion requested
+16:43:53    load: writes ok=4921 failed=0, reads ok=6332 notFound=0 failed=0
+16:43:54  rollback step_succeeded switchover 
+16:43:54  rollback step_started   cutover    
+16:43:54  rollback metric         cutover    write downtime
+16:43:54  rollback step_succeeded cutover    
+16:43:54  rollback log            verify     4921 written records of stream e2e-observe-rollback are ready for verification
+16:43:54  rollback step_started   verify     
+16:43:54  rollback step_succeeded verify     
+16:43:54  rollback step_started   finalize   
+16:43:54  rollback step_succeeded finalize   
+16:43:54  rollback done                      migration succeeded
+16:43:54  rollback status_changed            succeeded (verify)
+16:43:54  rollback status_changed            run ended: succeeded
+== result (observe-rollback)
+run            e2e-observe-rollback-20261104-074208 status=succeeded SLO violated after cutover: p95 1439ms is above 800ms; starting the automatic rollback
+fault          injected at 16:43:27
+canary  50%    ok           193 requests, error rate 0.00%, p95 3ms
+canary 100%    ok           400 requests, error rate 0.00%, p95 2ms
+observe        violated     p95 1439ms is above 800ms
+gateway        writeBackend=src readWeights=map[dst:0 src:100] writesHeld=false
+client writes  ok=5298 failed=0; longest gap without a successful write 14.91s
+client reads   ok=6724 notFound=0 failed=0; by backend map[dst:1662 src:5062]
+rollback run   e2e-observe-rollback-rollback-20261104-074337 status=succeeded actor=slo-guard downtime 14.904s
+recheck        5298 of 5298 acknowledged writes are on the source (primary again)
+driver wall    1m53s (load start to end)
+== E2E passed
+== scenario migrate (under load)
+16:44:01 load running through http://127.0.0.1:18000: 4 writers, 4 readers
+16:44:01 plan pln_eb81b3041ae1 submitted (agent), target.yaml 1609 bytes sha256 b371272c3386, revision 2
+16:44:01 plan approved (operator); run e2e-migrate-20261104-074401 started (scenario migrate) with canary [1 10 25 50 75 90 100] every 5s
+16:44:01  step_started   precheck   
+16:44:01  step_succeeded precheck   
+16:44:01  step_started   prepare    
+16:44:01  step_succeeded prepare    
+16:44:01  step_started   presync    
+16:44:01  metric         presync    replication lag
+16:44:01  step_succeeded presync    
+16:44:01  step_started   delta      
+16:44:01  metric         delta      replication lag
+16:44:01  step_succeeded delta      
+16:44:01  status_changed            running (canary)
+16:44:01  canary_step               1% of reads to dst
+16:44:06  gate_result               gate at 1% inconclusive: only 2 requests reached the target (need 20); continuing to the next step
+16:44:06  canary_step               10% of reads to dst
+16:44:11  gate_result               gate at 10% passed: 33 requests, error rate 0.00%, p95 3ms
+16:44:11  canary_step               25% of reads to dst
+16:44:16    load: writes ok=1231 failed=0, reads ok=1308 notFound=0 failed=0
+16:44:16  gate_result               gate at 25% passed: 97 requests, error rate 0.00%, p95 3ms
+16:44:16  canary_step               50% of reads to dst
+16:44:21  gate_result               gate at 50% passed: 205 requests, error rate 0.00%, p95 3ms
+16:44:21  canary_step               75% of reads to dst
+16:44:26  gate_result               gate at 75% passed: 297 requests, error rate 0.00%, p95 2ms
+16:44:26  canary_step               90% of reads to dst
+16:44:31    load: writes ok=2322 failed=0, reads ok=2460 notFound=0 failed=0
+16:44:31  gate_result               gate at 90% passed: 379 requests, error rate 0.00%, p95 2ms
+16:44:31  canary_step               100% of reads to dst
+16:44:36  gate_result               gate at 100% passed: 404 requests, error rate 0.00%, p95 10ms
+16:44:36  status_changed            awaiting_switch (awaiting_switch)
+16:44:36 switch approved (operator)
+16:44:36  log                       cutover approved by operator
+16:44:36  status_changed            running (cutover)
+16:44:36  step_started   fence      
+16:44:36  log            fence      writes held at gateway
+16:44:36  step_succeeded fence      
+16:44:36  step_started   switchover 
+16:44:36  log            switchover fence gate passed
+16:44:37  log            switchover source demotion requested
+16:44:39  log            switchover target promotion requested
+16:44:46    load: writes ok=2670 failed=0, reads ok=3524 notFound=0 failed=0
+16:44:51  step_succeeded switchover 
+16:44:51  step_started   cutover    
+16:44:51  metric         cutover    write downtime
+16:44:51  step_succeeded cutover    
+16:44:51  log            verify     2670 written records of stream e2e are ready for verification
+16:44:51  step_started   verify     
+16:44:51  step_succeeded verify     
+16:44:51  step_started   finalize   
+16:44:51  step_succeeded finalize   
+16:44:51  done                      migration succeeded
+16:44:51  status_changed            succeeded (verify)
+16:44:51  status_changed            run ended: succeeded
+== result
+run            e2e-migrate-20261104-074401 status=succeeded 
+canary   1%    passed=false only 2 requests reached the target (need 20); continuing to the next step
+canary  10%    passed=true 33 requests, error rate 0.00%, p95 3ms
+canary  25%    passed=true 97 requests, error rate 0.00%, p95 3ms
+canary  50%    passed=true 205 requests, error rate 0.00%, p95 3ms
+canary  75%    passed=true 297 requests, error rate 0.00%, p95 2ms
+canary  90%    passed=true 379 requests, error rate 0.00%, p95 2ms
+canary 100%    passed=true 404 requests, error rate 0.00%, p95 10ms
+downtime       15.117s (writes held at the gateway, engine)
+run duration   50.447s
+gateway        requests=6306 failed=0 (during the run)
+verify         verified=true missingRows=0 missingWrites=0 checkedWrites=2670
+client writes  ok=3048 failed=0; longest gap without a successful write 15.121s, slowest write 15.126s
+client reads   ok=4320 notFound=0 failed=0; by backend map[dst:2765 src:1555]
+records        sent=3048 unsent=0 stream=3048
+recheck        3048 of 3048 recorded writes are on the new primary
+driver wall    58s (load start to end)
+== E2E passed
+== second app by host name
+Host second.e2e.test: 200 blue
+Host SECOND.e2e.test:443: 200 blue
+Host app.e2e.test: 200 dst
+Host 127.0.0.1:18000: 200 dst
+Host sceond.e2e.test: 404 -
+Host second.e2e.test: 404 -
+== E2E passed
+== wall time 227s
+KEEP=1: still running, logs in C:/Users/SSAFY/Downloads/softbank/platform/.hopcharlie/e2e. Remove with test/e2e/down.sh
+
+[exited with code 0]

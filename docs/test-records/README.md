@@ -10,6 +10,8 @@
 | 2026-11-04 | 운영 클러스터 상태 확인 (샘플 앱, 엔진 위치) | 조회만 | [아래](#2026-11-04-운영-클러스터-상태-확인-조회만) |
 | 2026-11-04 | 실제 환경 이전 가능 여부 점검 | 플랫폼 경로 불가, CLI 경로 EKS 내부만 가능 | [아래](#2026-11-04-실제-환경-이전-가능-여부-점검-조회만) |
 | 2026-11-04 | 로컬 게이트웨이 리허설 (CNPG 1.30.1, gateway http, hello 앱, 부하) | 통과, 원복 직후 쓰기 503 8건 | [아래](#2026-11-04-로컬-게이트웨이-리허설) |
+| 2026-11-04 | 엔진 단계별 엣지·실패 케이스 단위 테스트 | 통과, 결함 1건 수정 | [아래](#2026-11-04-엔진-단계별-엣지실패-케이스) |
+| 2026-11-04 | 플랫폼 점진 카나리와 실패 시 롤백 e2e (kind) | 3/3 통과 (1회차 observe 시나리오 설계 오류) | [아래](#2026-11-04-점진-카나리와-실패-시-롤백-e2e) |
 
 ---
 
@@ -127,3 +129,48 @@ kind 클러스터 `hopgw`는 남겨 둠
 - 지연: p50 5 ms, p99 33 ms, 최대 37,572 ms(시나리오 2 보류 대기)
 - 주의: 원복 시 보류가 37.6초로 게이트웨이 maxHold(55초)에 가까워졌다. 원복이 더 길어지면 보류된 쓰기가 `503 hold_timeout`을 받는다. 재승격 뒤 쓰기 가능까지 약 24.6초가 걸린 원인은 조사하지 않음
 - 1회 실행 결과이며 재현성은 검증하지 않음
+
+## 2026-11-04 엔진 단계별 엣지·실패 케이스
+
+- 대상: migration-engine `8d8b064`(PR #7 머지 후) + 브랜치 `test/engine-edge-cases`(미커밋)
+- 방법: 가짜 CNPG·DB·게이트웨이(`pkg/engine/fakes_test.go`)에 실패 스위치를 더하고(`applyErr`, `healthErr`, `posErrCalls`), 단계마다 실패 지점을 테이블·개별 테스트로 추가
+- 추가한 경우와 기대 결과
+
+| 단계 | 경우 | 기대 |
+|---|---|---|
+| precheck | 원본이 topology primary 아님 / 원본 DB recovery / DB 접속 불가 / 게이트웨이 비정상 / replica.self 충돌 / 대상도 manifest도 없음 | failed, 아무것도 건드리지 않음 |
+| prepare | manifest 적용 거부 / 대상이 healthy 안 됨 / 대상이 쓰기 가능(두 번째 primary) | failed, 쓰기 보류 없음 |
+| presync | 지연이 안 줄어듦 | failed, 쓰기 보류 없음 |
+| presync | 지연 측정 일시 오류 3회 | 재시도 후 succeeded |
+| delta | 파일 동기화 실패 | failed, 쓰기 보류 없음 |
+| fence | 보류 뒤 fence LSN 읽기 실패 | rolled_back, 원본에 쓰기 해제, 원본 미변경 |
+| switchover | 대상이 fence LSN 못 따라옴 | rolled_back, 강등 전 |
+| switchover | **강등 요청 자체가 오류(적용 안 됨)** | rolled_back (수정 전: halted) |
+| switchover | 승격 요청 오류 | halted (split-brain 방지) |
+| switchover | 승격된 대상이 안정되지 않음 | halted, 쓰기 보류 유지 |
+| cutover | 경로 변경 뒤 해제 실패 | halted, 트래픽 대상 |
+| verify | 옛 원본이 replica로 안 돌아옴 | halted, 트래픽 대상 유지 |
+| 원복 | 원본으로 경로 복귀 실패 | halted, 쓰기 해제 안 함 |
+| 원복 | 다시 승격한 원본이 안정되지 않음 | halted, 쓰기 보류 유지 |
+
+- 발견·수정한 결함: switchover가 강등 요청 전에 `SourceDemoted`를 기록해서, 요청이 오류로 끝나 실제로는 아무것도 바뀌지 않았는데도 원복이 오지 않을 토큰을 기다리다 halted가 됐다. 원본이 여전히 자기 자신을 primary로 가리키고 새 토큰이 없으면 플래그를 되돌린다(`steps.go`, ADR 0003 보완). 새 테스트는 수정 전 실패(`outcome halted ... source demotion did not finish`), 수정 후 통과
+- 원복 전체 시간 여유(`rollbackSlack`, 1분)를 변수로 빼서 테스트에서 줄였다(그 테스트가 63초 → 약 2초)
+- 실행: `go test ./...` 통과, `go test -race ./pkg/engine/` 통과, `go vet ./...`, gofmt(LF 기준), `git diff --check` 깨끗함
+- 검증하지 않은 것: 가짜 객체 테스트라 실제 CNPG에서 강등 요청이 거부되는 상황은 재현하지 않음. finalize의 실패(대상이 primary가 아님)는 테스트하지 않음
+
+## 2026-11-04 점진 카나리와 실패 시 롤백 e2e
+
+- 대상: platform `0b218b7` + 미커밋 변경(카나리 판단 보류, `CanaryStep.verdict`, e2e 장애 주입), 엔진은 platform go.mod가 고정한 버전
+- 환경: platform `test/e2e/run.sh`(kind `hop-e2e`, CNPG 1.25.1, platform API·게이트웨이·테스트 앱 두 벌은 호스트 프로세스, 쓰기 4·읽기 4 사용자 부하)
+- 카나리: 1%→10%→25%→50%→75%→90%→100%, 단계마다 5초
+- 원시 로그(비밀번호·토큰 가림): [2026-11-04-platform-e2e-failure-scenarios/](2026-11-04-platform-e2e-failure-scenarios/)
+
+| 회차 | 시나리오 | 장애 | 결과 |
+|---|---|---|---|
+| 1 | canary-fault | 10% 단계 시작 시 대상 읽기 전부 500 | **통과**. 1% inconclusive(요청 0) → 10% failed(오류율 100%) → rolled_back. 게이트웨이 쓰기·읽기 모두 src, 쓰기 5,306건 실패 0, 원본에 전부 있음. 사용자 읽기 실패 0(게이트웨이가 실패한 읽기를 원본으로 재시도한 것으로 보임) |
+| 1 | observe-rollback | 전환 후 대상 **읽기만** 1.2초 | **실패(시나리오 설계 오류)**. 대상 요청 대부분이 쓰기라 p95 9ms, 위반 없음. 제품 결함 아님 |
+| 2 | observe-rollback | 전환 후 대상 **모든 요청** 1.2초 | **통과**. observe violated(p95 1,439ms > 800ms) → `slo-guard` 롤백 run succeeded(쓰기 다운타임 14.9초). 게이트웨이 쓰기·읽기 src, 쓰기 5,298건 실패 0, 원본에 전부 있음 |
+| 2 | migrate | 없음 | **통과**. 1% inconclusive(요청 2) → 10~100% ok, 다운타임 15.1초, 게이트웨이 실패 0, missingWrites 0, 기록한 쓰기 3,048건 전부 새 primary에 있음 |
+
+- 단위 테스트: platform `go test ./...` 중 `tools/apidoc`만 실패(로컬 전용 기존 실패, main에서도 같음). `-race` internal/runs·api 통과. frontend `npm run typecheck`, `npm test` 155/155 통과
+- 검증하지 않은 것: 실제 EKS/GKE, 클러스터 사이 네트워크, 정상 이전 후 observe 위반이 없을 때 자동 롤백이 일어나지 않는지(단위 테스트만), CLI 표시(`charlie migrate watch`는 아직 verdict를 모름), 각 시나리오 1회 실행

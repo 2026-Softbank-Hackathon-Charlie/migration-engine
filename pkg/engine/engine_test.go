@@ -163,6 +163,116 @@ func TestFailureOutcomes(t *testing.T) {
 			outcome:     OutcomeHalted,
 			mustNotCall: []string{"gw.release", "src.setPrimary db-gke"},
 		},
+		// --- precheck: every refusal leaves both clusters and the gateway untouched ---
+		{
+			name:        "precheck: source is not the topology primary -> failed",
+			fault:       func(w *world) { w.src.st.ReplicaPrimary = "db-eks" },
+			failStep:    StepPrecheck,
+			outcome:     OutcomeFailed,
+			mustNotCall: []string{"gw.hold", "dst.apply", "src.setPrimary"},
+		},
+		{
+			name:        "precheck: source database in recovery -> failed",
+			fault:       func(w *world) { w.srcDB.recovery = true },
+			failStep:    StepPrecheck,
+			outcome:     OutcomeFailed,
+			mustNotCall: []string{"gw.hold", "src.setPrimary"},
+		},
+		{
+			name:        "precheck: database unreachable -> failed",
+			fault:       func(w *world) { w.connectErr = errors.New("dial tcp: i/o timeout") },
+			failStep:    StepPrecheck,
+			outcome:     OutcomeFailed,
+			mustNotCall: []string{"gw.hold", "src.setPrimary"},
+		},
+		{
+			name:        "precheck: gateway unhealthy -> failed",
+			fault:       func(w *world) { w.gw.healthErr = errors.New("503") },
+			failStep:    StepPrecheck,
+			outcome:     OutcomeFailed,
+			mustNotCall: []string{"gw.hold", "src.setPrimary"},
+		},
+		{
+			name:        "precheck: source and target share replica.self -> failed",
+			fault:       func(w *world) { w.dst.st.Self = "db-gke" },
+			failStep:    StepPrecheck,
+			outcome:     OutcomeFailed,
+			mustNotCall: []string{"gw.hold"},
+		},
+		// --- prepare: the target must become a healthy, streaming replica ---
+		{
+			name:        "prepare: manifest apply refused -> failed",
+			fault:       func(w *world) { w.dst.exists = false; w.dst.applyErr = errors.New("admission webhook denied") },
+			failStep:    StepPrepare,
+			outcome:     OutcomeFailed,
+			mustNotCall: []string{"gw.hold"},
+		},
+		{
+			name:        "prepare: target never healthy -> failed after catchupTimeout",
+			fault:       func(w *world) { w.dst.st.Phase = "Setting up primary" },
+			failStep:    StepPrepare,
+			outcome:     OutcomeFailed,
+			mustNotCall: []string{"gw.hold"},
+		},
+		{
+			// A writable target would be a second primary: never migrate into it.
+			name:        "prepare: target is writable (not a replica) -> failed",
+			fault:       func(w *world) { w.dstDB.recovery = false },
+			failStep:    StepPrepare,
+			outcome:     OutcomeFailed,
+			mustNotCall: []string{"gw.hold", "src.setPrimary"},
+		},
+		// --- presync/delta: lag must come down before writes are held ---
+		{
+			name:        "presync: target lag never comes down -> failed, writes never held",
+			fault:       func(w *world) { w.dstDB.pos = 1000 - 64<<20 },
+			failStep:    StepPresync,
+			outcome:     OutcomeFailed,
+			mustNotCall: []string{"gw.hold"},
+		},
+		// --- switchover ---
+		{
+			name:        "switchover: target never replays the fence LSN -> rolled back before demotion",
+			fault:       func(w *world) { w.dstDB.pos = 10 }, // within maxLagBytes, but behind the fence
+			failStep:    StepSwitchover,
+			outcome:     OutcomeRolledBack,
+			mustCall:    []string{"gw.route gke", "gw.release"},
+			mustNotCall: []string{"src.setPrimary", "dst.setPrimary"},
+		},
+		{
+			// After the promotion request the target may already be primary: no automatic rollback.
+			name:        "switchover: promotion request fails -> halted (split-brain guard)",
+			fault:       func(w *world) { w.dst.setErr = errors.New("conflict") },
+			failStep:    StepSwitchover,
+			outcome:     OutcomeHalted,
+			mustCall:    []string{`dst.setPrimary db-eks token="tok-1000"`},
+			mustNotCall: []string{"src.setPrimary db-gke", "gw.route", "gw.release"},
+		},
+		{
+			name:        "switchover: promoted target never settles -> halted, writes stay held",
+			fault:       func(w *world) { w.restartGets = 1 << 30 },
+			failStep:    StepSwitchover,
+			outcome:     OutcomeHalted,
+			mustNotCall: []string{"gw.route", "gw.release", "src.setPrimary db-gke"},
+		},
+		// --- cutover ---
+		{
+			name:        "cutover: release fails after the route -> halted, traffic on target",
+			fault:       func(w *world) { w.gw.releaseErr = errors.New("gateway lost") },
+			failStep:    StepCutover,
+			outcome:     OutcomeHalted,
+			mustCall:    []string{"gw.route eks", "gw.release"},
+			mustNotCall: []string{"gw.route gke", "src.setPrimary db-gke"},
+		},
+		// --- verify ---
+		{
+			name:        "verify: old source never comes back as a replica -> halted, traffic stays on target",
+			fault:       func(w *world) { w.sourceDownCalls = 1 << 30 },
+			failStep:    StepVerify,
+			outcome:     OutcomeHalted,
+			mustCall:    []string{"gw.route eks", "gw.release"},
+			mustNotCall: []string{"gw.route gke"},
+		},
 		{
 			name:        "verify: missing rows -> halted (target already serving)",
 			fault:       func(w *world) { w.ver.reportOK = false },
@@ -236,6 +346,140 @@ func TestFileSyncFailsInsideFence(t *testing.T) {
 	assertOrder(t, calls, "gw.hold", "gw.route gke", "gw.release")
 	if st.DowntimeMillis < 0 || st.WritesHeld {
 		t.Errorf("state after rollback: %+v", st)
+	}
+}
+
+// runThrough runs the steps before stop, so a test can break something
+// between steps (a fault that would also break an earlier step).
+func runThrough(t *testing.T, e *Engine, stop string) {
+	t.Helper()
+	for _, s := range Steps {
+		if s == stop {
+			return
+		}
+		if err := e.RunStep(context.Background(), s); err != nil {
+			t.Fatalf("%s: %v", s, err)
+		}
+	}
+}
+
+func TestTargetMissingWithoutManifestFailsPrecheck(t *testing.T) {
+	h := newHarness(t)
+	h.w.dst.exists = false
+	h.p.Target.Manifest = ""
+	e := h.engine(t, "")
+	if err := e.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "target.manifest is not set") {
+		t.Fatalf("err = %v", err)
+	}
+	if e.State().Outcome != OutcomeFailed || contains(h.w.Calls(), "gw.hold") {
+		t.Fatalf("outcome %s, calls %v", e.State().Outcome, h.w.Calls())
+	}
+}
+
+// A connection blip while measuring lag is retried, not a failure.
+func TestLagCheckRetriesTransientErrors(t *testing.T) {
+	h := newHarness(t)
+	h.w.dstDB.posErrCalls = 3
+	e := h.engine(t, "")
+	if err := e.Run(context.Background()); err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if e.State().Outcome != OutcomeSucceeded {
+		t.Fatalf("outcome %s", e.State().Outcome)
+	}
+}
+
+// A file sync failure in delta happens before writes are held: nothing to undo.
+func TestDeltaFileSyncFailureDoesNotHoldWrites(t *testing.T) {
+	h := newHarness(t)
+	e := h.engine(t, "")
+	runThrough(t, e, StepDelta)
+	h.w.files.syncErr = errors.New("bucket unreachable")
+	if err := e.RunStep(context.Background(), StepDelta); err == nil {
+		t.Fatal("expected failure")
+	}
+	if st := e.State(); st.Outcome != OutcomeFailed || st.WritesHeld {
+		t.Fatalf("outcome %s writesHeld %t", st.Outcome, st.WritesHeld)
+	}
+	if contains(h.w.Calls(), "gw.hold") {
+		t.Fatal("writes were held")
+	}
+}
+
+// Writes are already held when the fence LSN cannot be read: release them on
+// the source.
+func TestFenceLSNReadFailureReleasesWrites(t *testing.T) {
+	h := newHarness(t)
+	e := h.engine(t, "")
+	runThrough(t, e, StepFence)
+	h.w.srcDB.posErr = errors.New("connection reset by peer")
+	if err := e.RunStep(context.Background(), StepFence); err == nil {
+		t.Fatal("expected failure")
+	}
+	st := e.State()
+	if st.Outcome != OutcomeRolledBack || st.WritesHeld || st.SourceDemoted {
+		t.Fatalf("state %+v", st)
+	}
+	assertOrder(t, h.w.Calls(), "gw.hold", "gw.route gke", "gw.release")
+	if slices.ContainsFunc(h.w.Calls(), func(c string) bool { return strings.HasPrefix(c, "src.setPrimary") }) {
+		t.Fatal("the source was touched")
+	}
+}
+
+// The demotion request itself fails (API error, webhook): CNPG never started
+// demoting, so the source is still primary. Roll back right away instead of
+// waiting for a demotion token that will never come and halting.
+func TestDemotionRequestFailureRollsBack(t *testing.T) {
+	h := newHarness(t)
+	h.w.src.setErr = errors.New("the server rejected our request")
+	e := h.engine(t, "")
+	if err := e.Run(context.Background()); err == nil {
+		t.Fatal("expected failure")
+	}
+	st := e.State()
+	if st.Outcome != OutcomeRolledBack || st.SourceDemoted || st.WritesHeld {
+		t.Fatalf("outcome %s demoted %t held %t (rollbackError %q)", st.Outcome, st.SourceDemoted, st.WritesHeld, st.RollbackError)
+	}
+	assertOrder(t, h.w.Calls(), `src.setPrimary db-eks token=""`, "gw.route gke", "gw.release")
+	if slices.ContainsFunc(h.w.Calls(), func(c string) bool { return strings.HasPrefix(c, "dst.setPrimary") }) {
+		t.Fatal("the target was promoted")
+	}
+}
+
+// The rollback cannot move traffic back: halted, with the reason recorded.
+func TestRollbackRouteFailureHalts(t *testing.T) {
+	h := newHarness(t)
+	h.w.ver.gateOK = false
+	h.w.gw.routeErr, h.w.gw.routeErrTo = errors.New("503"), "gke"
+	e := h.engine(t, "")
+	if err := e.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "rollback failed") {
+		t.Fatalf("err = %v", err)
+	}
+	st := e.State()
+	if st.Outcome != OutcomeHalted || st.RollbackError == "" || !st.WritesHeld {
+		t.Fatalf("outcome %s rollbackError %q writesHeld %t", st.Outcome, st.RollbackError, st.WritesHeld)
+	}
+	if contains(h.w.Calls(), "gw.release") {
+		t.Fatal("writes released without a route to the source")
+	}
+}
+
+// The re-promoted source never settles: the rollback cannot finish safely, so
+// writes stay held and the run halts for an operator.
+func TestRollbackHaltsWhenSourceNeverSettles(t *testing.T) {
+	h := newHarness(t)
+	h.w.tokenAfter = 1200 * time.Millisecond
+	h.w.srcRestartGets = 1 << 30
+	e := h.engine(t, "")
+	if err := e.Run(context.Background()); err == nil {
+		t.Fatal("expected failure")
+	}
+	st := e.State()
+	if st.Outcome != OutcomeHalted || !strings.Contains(st.RollbackError, "did not settle") || !st.WritesHeld {
+		t.Fatalf("outcome %s rollbackError %q writesHeld %t", st.Outcome, st.RollbackError, st.WritesHeld)
+	}
+	if contains(h.w.Calls(), "gw.release") {
+		t.Fatal("writes released to a source that is restarting")
 	}
 }
 

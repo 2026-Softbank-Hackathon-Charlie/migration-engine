@@ -1,0 +1,137 @@
+16:59:10 == build (work dir C:/Users/SSAFY/AppData/Local/Temp/claude/9547001a4aafcf2a/2bbd16b7-16f8-4400-8c39-97078d84e89d/scratchpad/moimroom-e2e/platform/.hopcharlie/e2e-moimroom)
+17:00:33 == kind cluster hop-moimroom, CNPG 1.25.1
+17:00:35 Creating cluster "hop-moimroom" ...
+17:00:35  • Ensuring node image (kindest/node:v1.37.0) 🖼️  ...
+17:00:35  ✓ Ensuring node image (kindest/node:v1.37.0) 🖼️
+17:00:35  • Preparing nodes 📦   ...
+17:00:41  ✓ Preparing nodes 📦 
+17:00:41  • Writing configuration 📜  ...
+17:00:42  ✓ Writing configuration 📜
+17:00:42  • Starting control-plane 🕹️  ...
+17:00:56  ✓ Starting control-plane 🕹️
+17:00:56  • Installing CNI 🔌  ...
+17:00:57  ✓ Installing CNI 🔌
+17:00:57  • Installing StorageClass 💾  ...
+17:00:57  ✓ Installing StorageClass 💾
+17:00:58 Set kubectl context to "kind-hop-moimroom"
+17:00:58 You can now use your cluster with:
+17:00:58 
+17:00:58 kubectl cluster-info --context kind-hop-moimroom --kubeconfig C:/Users/SSAFY/AppData/Local/Temp/claude/9547001a4aafcf2a/2bbd16b7-16f8-4400-8c39-97078d84e89d/scratchpad/moimroom-e2e/platform/.hopcharlie/e2e-moimroom/kubeconfig
+17:00:58 
+17:00:58 Not sure what to do next? 😅  Check out https://kind.sigs.k8s.io/docs/user/quick-start/
+17:00:59 Set kubectl context to "kind-hop-moimroom"
+17:01:00 Image: "moimroom:e2e" with ID "sha256:cab2fb367dc2805fdcf4e2abe7bc958047cc82c4411fd511bfc669b1e78fc676" not yet present on node "hop-moimroom-control-plane", loading...
+17:01:07 Waiting for deployment "cnpg-controller-manager" rollout to finish: 0 of 1 updated replicas are available...
+17:01:45 deployment "cnpg-controller-manager" successfully rolled out
+17:01:45 == namespace moimroom: object stores
+17:01:49 Waiting for deployment "minio-src" rollout to finish: 1 old replicas are pending termination...
+17:02:06 Waiting for deployment "minio-src" rollout to finish: 1 old replicas are pending termination...
+17:02:12 Waiting for deployment "minio-src" rollout to finish: 1 old replicas are pending termination...
+17:02:12 deployment "minio-src" successfully rolled out
+17:02:12 deployment "minio-dst" successfully rolled out
+17:02:13 == databases: moimroom-src-db (primary), moimroom-dst-db (replica, prepared like infra would)
+17:03:30 cluster.postgresql.cnpg.io/moimroom-src-db condition met
+17:03:30 pod/moimroom-src-db-1 condition met
+17:03:53 cluster.postgresql.cnpg.io/moimroom-dst-db condition met
+17:03:53 == moimroom releases (Helm chart C:/Users/SSAFY/AppData/Local/Temp/claude/9547001a4aafcf2a/2bbd16b7-16f8-4400-8c39-97078d84e89d/scratchpad/moimroom-e2e/moimroom/deploy/helm/moimroom)
+17:04:06 == platform store hop-moimroom-store on 127.0.0.1:55752
+17:04:24 == gateway, platform API
+17:04:27 == migrate under load (database and photos)
+17:04:30 17:04:30 users running through http://127.0.0.1:18200: 4 bookers, 4 readers, a photo every 2s, 16 spaces
+17:04:30 17:04:30 plan pln_18364af89a84 submitted (agent), target.yaml 1404 bytes, revision 2
+17:04:30 17:04:30 plan approved (operator); run moimroom-src-to-dst-20261104-080430 started with canary [10 50] every 10s, observe 30s
+17:04:30 17:04:30  step_started   precheck   
+17:04:30 17:04:30  step_succeeded precheck   
+17:04:30 17:04:30  step_started   prepare    
+17:04:30 17:04:30  step_succeeded prepare    
+17:04:30 17:04:30  step_started   presync    
+17:04:30 17:04:30  metric         presync    replication lag
+17:04:31 17:04:31  step_succeeded presync    
+17:04:31 17:04:31  step_started   delta      
+17:04:31 17:04:31  metric         delta      replication lag
+17:04:31 17:04:31  step_succeeded delta      
+17:04:31 17:04:31  status_changed            running (canary)
+17:04:31 17:04:31  canary_step               10% of reads to dst
+17:04:41 17:04:41  gate_result               gate at 10% passed: 72 requests, error rate 0.00%, p95 18ms
+17:04:41 17:04:41  canary_step               50% of reads to dst
+17:04:45 17:04:45    users: bookings ok=594 failed=0, photos ok=9 failed=0, reads ok=1036 notFound=70 failed=0
+17:04:51 17:04:51  gate_result               gate at 50% passed: 327 requests, error rate 0.00%, p95 6ms
+17:04:51 17:04:51  status_changed            awaiting_switch (awaiting_switch)
+17:04:51 17:04:51 switch approved (operator)
+17:04:51 17:04:51  log                       cutover approved by operator
+17:04:51 17:04:51  status_changed            running (cutover)
+17:04:51 17:04:51  step_started   fence      
+17:04:51 17:04:51  log            fence      writes held at gateway
+17:04:52 17:04:52  step_succeeded fence      
+17:04:52 17:04:52  step_started   switchover 
+17:04:52 17:04:52  log            switchover fence gate passed
+17:04:52 17:04:52  log            switchover source demotion requested
+17:04:54 17:04:54  log            switchover target promotion requested
+17:05:00 17:05:00    users: bookings ok=810 failed=0, photos ok=12 failed=0, reads ok=2003 notFound=141 failed=0
+17:05:07 17:05:07  step_succeeded switchover 
+17:05:07 17:05:07  step_started   cutover    
+17:05:07 17:05:07  metric         cutover    write downtime
+17:05:07 17:05:07  step_succeeded cutover    
+17:05:07 17:05:07  log            verify     810 written records of stream moimroom are ready for verification
+17:05:07 17:05:07  step_started   verify     
+17:05:08 17:05:08  step_succeeded verify     
+17:05:08 17:05:08  step_started   finalize   
+17:05:08 17:05:08  step_succeeded finalize   
+17:05:08 17:05:08  done                      migration succeeded
+17:05:08 17:05:08  status_changed            running (observe)
+17:05:15 17:05:15    users: bookings ok=1123 failed=0, photos ok=19 failed=0, reads ok=3008 notFound=141 failed=0
+17:05:18 17:05:18  observe_step              observe ok: 1045 requests, error rate 0.00%, p95 71ms
+17:05:28 17:05:28  observe_step              observe ok: 1096 requests, error rate 0.00%, p95 62ms
+17:05:30 17:05:30    users: bookings ok=1742 failed=0, photos ok=26 failed=0, reads ok=4009 notFound=141 failed=0
+17:05:38 17:05:38  observe_step              observe ok: 997 requests, error rate 0.00%, p95 60ms
+17:05:38 17:05:38  status_changed            succeeded (observe)
+17:05:38 17:05:38  status_changed            run ended: succeeded
+17:05:43 == result
+17:05:43 run            moimroom-src-to-dst-20261104-080430 status=succeeded 
+17:05:43 canary  10%    passed=true 72 requests, error rate 0.00%, p95 18ms
+17:05:43 canary  50%    passed=true 327 requests, error rate 0.00%, p95 6ms
+17:05:43 observe        ok           1045 requests, error rate 0.00%, p95 71ms
+17:05:43 observe        ok           1096 requests, error rate 0.00%, p95 62ms
+17:05:43 observe        ok           997 requests, error rate 0.00%, p95 60ms
+17:05:43 observe        passed=true violation=
+17:05:43 downtime       15.685s (writes held at the gateway, engine)
+17:05:43 run duration   1m7.517s
+17:05:43 gateway        requests=6445 failed=0 (during the run)
+17:05:43 verify         verified=true missingRows=0 missingWrites=0 missingFiles=0
+17:05:43 bookings       ok=2260 failed=0 conflict=0; longest gap without a booking 15.788s, slowest 15.764s
+17:05:43 photos         uploaded=32 failed=0
+17:05:43 reads          ok=4857 notFound=141 failed=0; by backend map[dst:3351 src:1647]
+17:05:43 records        sent=2260 unsent=0 stream=2260
+17:05:43 recheck        2260 of 2260 recorded bookings are on the new primary
+17:05:43 photo recheck  32 of 32 uploaded photos served by the new environment with the same bytes (0 missing)
+17:05:43 driver wall    1m16s (load start to end)
+17:05:43 == migration passed
+17:05:43 == decommission the source (engine)
+17:05:43 17:05:43.796 ▶ inventory
+17:05:45 17:05:45.626 ✔ inventory (1830 ms)
+17:05:45 17:05:45.627 ▶ stop
+17:05:52 17:05:52.448 ✔ stop (6819 ms)
+17:05:52 17:05:52.449 ▶ observe
+17:06:12 17:06:12.494 ✔ observe (20044 ms)
+17:06:12 17:06:12.495 ▶ block
+17:06:19 17:06:19.615 ✔ block (7119 ms)
+17:06:19 17:06:19.617 ▶ smoke
+17:06:19 17:06:19.632 ✔ smoke (15 ms)
+17:06:19 17:06:19.634 ▶ reconcile
+17:06:20 17:06:20.643 ✔ reconcile (1009 ms)
+17:06:20 17:06:20.645 ★ decommission complete counts={0 1 2 1 0} passed=true
+17:06:20 
+17:06:20 decommission PASSED
+17:06:20   resources   unprocessed 0 / stopped 1 / retained 2 / awaiting approval 1 / removed 0
+17:06:20     stopped            Deployment/moimroom-src            old app; scaled to zero, restorable
+17:06:20     awaiting_approval  Service/moimroom-src               deleting needs an operator's approval
+17:06:21     retained           PersistentVolumeClaim/moimroom-src-db-1 data kept with the old database
+17:06:21     retained           Cluster/moimroom-src-db            old database kept as a replica of the new primary, for migrating back
+17:06:21   observed    20s (11 samples): old-database client sessions 0, gateway requests to source 0
+17:06:21   blocked     hopcharlie-decommission-app, hopcharlie-decommission-db, old database refused the engine: true
+17:06:21   smoke       GET /api/spaces -> 200 ok=true (8 ms)
+17:06:21   smoke       GET /readyz -> 200 ok=true (3 ms)
+17:06:21 == E2E passed
+17:06:21 == wall time 430s
+17:06:21 KEEP=1: still running, logs in C:/Users/SSAFY/AppData/Local/Temp/claude/9547001a4aafcf2a/2bbd16b7-16f8-4400-8c39-97078d84e89d/scratchpad/moimroom-e2e/platform/.hopcharlie/e2e-moimroom. Remove with test/e2e/moimroom/down.sh
+exit 0 end 2026-11-04 17:06:21    

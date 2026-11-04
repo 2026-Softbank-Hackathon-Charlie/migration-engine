@@ -1,0 +1,241 @@
+{
+  "runId": "moimroom-src-to-dst-20261104-080430",
+  "planId": "moimroom-src-to-dst",
+  "createdAt": "2026-11-04T08:04:30.6068796Z",
+  "updatedAt": "2026-11-04T08:05:08.1169175Z",
+  "outcome": "succeeded",
+  "steps": {
+    "cutover": {
+      "status": "succeeded",
+      "startedAt": "2026-11-04T08:05:07.3766229Z",
+      "endedAt": "2026-11-04T08:05:07.3938119Z",
+      "evidence": {
+        "backend": "dst",
+        "downtimeMillis": 15685,
+        "maxDowntimeMillis": 180000,
+        "withinBudget": true
+      }
+    },
+    "delta": {
+      "status": "succeeded",
+      "startedAt": "2026-11-04T08:04:31.2826855Z",
+      "endedAt": "2026-11-04T08:04:31.6355268Z",
+      "evidence": {
+        "filesSync": {
+          "duration": 348080400,
+          "output": "2026/11/04 17:04:31 NOTICE: Config file \"C:\\\\Users\\\\SSAFY\\\\AppData\\\\Roaming\\\\rclone\\\\rclone.conf\" not found - using defaults"
+        },
+        "lagBytes": 0
+      }
+    },
+    "fence": {
+      "status": "succeeded",
+      "startedAt": "2026-11-04T08:04:51.6609985Z",
+      "endedAt": "2026-11-04T08:04:52.0536886Z",
+      "evidence": {
+        "fenceLsn": "0/4193B10",
+        "filesSync": {
+          "duration": 342095800,
+          "output": "2026/11/04 17:04:51 NOTICE: Config file \"C:\\\\Users\\\\SSAFY\\\\AppData\\\\Roaming\\\\rclone\\\\rclone.conf\" not found - using defaults"
+        },
+        "writesHeldAt": "2026-11-04T08:04:51.7066263Z"
+      }
+    },
+    "finalize": {
+      "status": "succeeded",
+      "startedAt": "2026-11-04T08:05:08.1013673Z",
+      "endedAt": "2026-11-04T08:05:08.1151938Z",
+      "evidence": {
+        "downtimeMillis": 15685,
+        "source": {
+          "phase": "Cluster in healthy state",
+          "currentPrimary": "moimroom-src-db-1",
+          "instances": 1,
+          "readyInstances": 1,
+          "hasDemotionToken": true,
+          "self": "moimroom-src-db",
+          "replicaPrimary": "moimroom-dst-db",
+          "replicaSource": "moimroom-dst-db"
+        },
+        "target": {
+          "phase": "Cluster in healthy state",
+          "currentPrimary": "moimroom-dst-db-1",
+          "instances": 1,
+          "readyInstances": 1,
+          "hasDemotionToken": false,
+          "self": "moimroom-dst-db",
+          "replicaPrimary": "moimroom-dst-db",
+          "replicaSource": "moimroom-src-db"
+        }
+      }
+    },
+    "precheck": {
+      "status": "succeeded",
+      "startedAt": "2026-11-04T08:04:30.6155401Z",
+      "endedAt": "2026-11-04T08:04:30.6593763Z",
+      "evidence": {
+        "source": {
+          "phase": "Cluster in healthy state",
+          "currentPrimary": "moimroom-src-db-1",
+          "instances": 1,
+          "readyInstances": 1,
+          "hasDemotionToken": false,
+          "self": "moimroom-src-db",
+          "replicaPrimary": "moimroom-src-db",
+          "replicaSource": "moimroom-dst-db"
+        },
+        "target": {
+          "phase": "Cluster in healthy state",
+          "currentPrimary": "moimroom-dst-db-1",
+          "instances": 1,
+          "readyInstances": 1,
+          "hasDemotionToken": false,
+          "self": "moimroom-dst-db",
+          "replicaPrimary": "moimroom-src-db",
+          "replicaSource": "moimroom-src-db"
+        }
+      }
+    },
+    "prepare": {
+      "status": "succeeded",
+      "startedAt": "2026-11-04T08:04:30.6616293Z",
+      "endedAt": "2026-11-04T08:04:30.7071948Z",
+      "evidence": {
+        "target": {
+          "phase": "Cluster in healthy state",
+          "currentPrimary": "moimroom-dst-db-1",
+          "instances": 1,
+          "readyInstances": 1,
+          "hasDemotionToken": false,
+          "self": "moimroom-dst-db",
+          "replicaPrimary": "moimroom-src-db",
+          "replicaSource": "moimroom-src-db"
+        }
+      }
+    },
+    "presync": {
+      "status": "succeeded",
+      "startedAt": "2026-11-04T08:04:30.7106645Z",
+      "endedAt": "2026-11-04T08:04:31.2798997Z",
+      "evidence": {
+        "filesSync": {
+          "duration": 558035100,
+          "output": "2026/11/04 17:04:31 NOTICE: Config file \"C:\\\\Users\\\\SSAFY\\\\AppData\\\\Roaming\\\\rclone\\\\rclone.conf\" not found - using defaults"
+        },
+        "lagBytes": 0
+      }
+    },
+    "switchover": {
+      "status": "succeeded",
+      "startedAt": "2026-11-04T08:04:52.0552778Z",
+      "endedAt": "2026-11-04T08:05:07.3755722Z",
+      "evidence": {
+        "demotionToken": true,
+        "fenceGate": {
+          "durationMillis": 49,
+          "ok": true,
+          "tables": [
+            {
+              "table": "app.reservation_slots",
+              "sourceCount": 810,
+              "targetCount": 810,
+              "sourceHash": "8a4172b383ca544d89dd2e9dd40ff1c0",
+              "targetHash": "8a4172b383ca544d89dd2e9dd40ff1c0",
+              "match": true
+            },
+            {
+              "table": "app.reservations",
+              "sourceCount": 810,
+              "targetCount": 810,
+              "sourceHash": "3fd905ed237c3c3e57207f9534ba557a",
+              "targetHash": "3fd905ed237c3c3e57207f9534ba557a",
+              "match": true
+            },
+            {
+              "table": "app.reviews",
+              "sourceCount": 0,
+              "targetCount": 0,
+              "match": true
+            },
+            {
+              "table": "app.space_photos",
+              "sourceCount": 12,
+              "targetCount": 12,
+              "sourceHash": "2dc87f301ec8c5304dd474b6e9996ecf",
+              "targetHash": "2dc87f301ec8c5304dd474b6e9996ecf",
+              "match": true
+            },
+            {
+              "table": "app.spaces",
+              "sourceCount": 16,
+              "targetCount": 16,
+              "sourceHash": "c88f7adbabec3f3fcb3b3770cf0c0672",
+              "targetHash": "c88f7adbabec3f3fcb3b3770cf0c0672",
+              "match": true
+            }
+          ]
+        },
+        "fenceLsn": "0/4193B10",
+        "settleMillis": 11653,
+        "targetLsnAfterPromotion": "0/5014000",
+        "targetReplayLsn": "0/41ABA18"
+      }
+    },
+    "verify": {
+      "status": "succeeded",
+      "startedAt": "2026-11-04T08:05:07.4031666Z",
+      "endedAt": "2026-11-04T08:05:08.0997304Z",
+      "evidence": {
+        "report": {
+          "ok": true,
+          "tables": [
+            {
+              "table": "app.reservation_slots",
+              "checked": 810,
+              "missing": 0
+            },
+            {
+              "table": "app.reservations",
+              "checked": 810,
+              "missing": 0
+            },
+            {
+              "table": "app.reviews",
+              "checked": 0,
+              "missing": 0
+            },
+            {
+              "table": "app.space_photos",
+              "checked": 14,
+              "missing": 0
+            },
+            {
+              "table": "app.spaces",
+              "checked": 16,
+              "missing": 0
+            }
+          ],
+          "missingRows": 0,
+          "written": {
+            "checked": 810,
+            "missing": 0
+          },
+          "files": {
+            "ok": true,
+            "matching": 12,
+            "differences": 0,
+            "missingOnTarget": 0,
+            "output": "2026/11/04 17:05:07 NOTICE: Config file \"C:\\\\Users\\\\SSAFY\\\\AppData\\\\Roaming\\\\rclone\\\\rclone.conf\" not found - using defaults\n2026/11/04 17:05:08 NOTICE: S3 bucket moimroom-photos: 0 differences found\n2026/11/04 17:05:08 NOTICE: S3 bucket moimroom-photos: 12 matching files"
+          }
+        }
+      }
+    }
+  },
+  "writesHeld": false,
+  "writesHeldAt": "2026-11-04T08:04:51.7066263Z",
+  "fenceLsn": "0/4193B10",
+  "sourceDemoted": true,
+  "promoteRequested": true,
+  "trafficOnTarget": true,
+  "downtimeMillis": 15685
+}

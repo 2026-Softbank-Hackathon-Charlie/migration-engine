@@ -1,0 +1,22 @@
+=== RUN   TestExampleParityFileLoads
+--- PASS: TestExampleParityFileLoads (0.00s)
+=== RUN   TestParityLive
+=== RUN   TestParityLive/matching_target
+    parity_test.go:91: passed=false
+        identity pass rbac_verified: read-own-config=pass(authorization_matches), no-secret-list=pass(authorization_matches), no-other-namespace=pass(authorization_matches)
+        secret unknown probe_not_configured
+        audit unknown probe_not_configured
+        metrics-alerting unknown observability_incomplete: metrics-target=pass(scrape_verified), alert-delivery=unknown(alert_probe_not_implemented)
+        backup-restore unknown probe_not_configured
+=== RUN   TestParityLive/drifted_target
+    parity_test.go:91: passed=false
+        identity fail rbac_mismatch: read-own-config=pass(authorization_matches), no-secret-list=pass(authorization_matches), no-other-namespace=pass(authorization_matches), list-pods=fail(authorization_mismatch)
+        secret unknown probe_not_configured
+        audit unknown probe_not_configured
+        metrics-alerting fail metrics_failed: metrics-target=fail(target_not_up), alert-delivery=unknown(alert_probe_not_implemented)
+        backup-restore unknown probe_not_configured
+--- PASS: TestParityLive (0.34s)
+    --- PASS: TestParityLive/matching_target (0.15s)
+    --- PASS: TestParityLive/drifted_target (0.19s)
+PASS
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/cmd/api	0.853s

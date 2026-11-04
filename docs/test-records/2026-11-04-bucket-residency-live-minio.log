@@ -1,0 +1,17 @@
+=== RUN   TestLiveGateWithMinIO
+    live_minio_test.go:97: network 127.0.0.0/8 prefixes "": allowed=true reasons=[] buckets=[{Bucket:onprem:gate-src-170350 Observation:{Hosting:self Location: LocationType: EndpointIPs:[127.0.0.1] Prefixes:[hosts/ rooms/] Replicas:[] Tiered:false}} {Bucket:dr:gate-dst-170350 Observation:{Hosting:self Location:kr-onprem-dr LocationType:region EndpointIPs:[127.0.0.1] Prefixes:[] Replicas:[] Tiered:false}}]
+    live_minio_test.go:100: network 10.0.0.0/8 prefixes "": allowed=false reasons=[bucket_endpoint_outside_network bucket_endpoint_outside_network] buckets=[{Bucket:onprem:gate-src-170350 Observation:{Hosting:self Location: LocationType: EndpointIPs:[127.0.0.1] Prefixes:[hosts/ rooms/] Replicas:[] Tiered:false}} {Bucket:dr:gate-dst-170350 Observation:{Hosting:self Location:kr-onprem-dr LocationType:region EndpointIPs:[127.0.0.1] Prefixes:[] Replicas:[] Tiered:false}}]
+    live_minio_test.go:103: network 127.0.0.0/8 prefixes ", prefixes: [{prefix: rooms/, label: global}]": allowed=false reasons=[unclassified_prefix] buckets=[{Bucket:onprem:gate-src-170350 Observation:{Hosting:self Location: LocationType: EndpointIPs:[127.0.0.1] Prefixes:[hosts/ rooms/] Replicas:[] Tiered:false}} {Bucket:dr:gate-dst-170350 Observation:{Hosting:self Location:kr-onprem-dr LocationType:region EndpointIPs:[127.0.0.1] Prefixes:[] Replicas:[] Tiered:false}}]
+    live_minio_test.go:106: network 127.0.0.0/8 prefixes ", prefixes: [{prefix: rooms/, label: global}, {prefix: hosts/, label: kr-only}]": allowed=false reasons=[prefix_country_not_allowed] buckets=[{Bucket:onprem:gate-src-170350 Observation:{Hosting:self Location: LocationType: EndpointIPs:[127.0.0.1] Prefixes:[hosts/ rooms/] Replicas:[] Tiered:false}} {Bucket:dr:gate-dst-170350 Observation:{Hosting:self Location:kr-onprem-dr LocationType:region EndpointIPs:[127.0.0.1] Prefixes:[] Replicas:[] Tiered:false}}]
+--- PASS: TestLiveGateWithMinIO (0.26s)
+PASS
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/gate	0.757s
+=== RUN   TestLiveMinIO
+    live_minio_test.go:80: plain: {Hosting:self Location: LocationType: EndpointIPs:[127.0.0.1] Prefixes:[ kyc/ rooms/] Replicas:[] Tiered:false}
+    live_minio_test.go:90: sample: {"prefix":"kyc/","objects":2,"truncated":false,"contentTypes":{"image/jpeg":2},"extensions":{".jpg":1,".png":1},"metadataKeys":{"owner-name":2},"keyPatterns":{"email":1,"kr_resident_number":1},"minSize":1,"maxSize":1,"maxDepth":2}
+    live_minio_test.go:121: remote target arn arn:minio:replication::3c78a3d6-94a3-4ee4-adac-f37816723474:photos-dr-170350
+    live_minio_test.go:139: replicated+tiered: {Hosting:self Location: LocationType: EndpointIPs:[127.0.0.1] Prefixes:[ kyc/ rooms/] Replicas:[photos-dr-170350] Tiered:true}
+    live_minio_test.go:149: dr: {Hosting:self Location:kr-onprem-dr LocationType:region EndpointIPs:[127.0.0.1] Prefixes:[] Replicas:[] Tiered:false}
+--- PASS: TestLiveMinIO (1.04s)
+PASS
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/bucketprobe	1.490s

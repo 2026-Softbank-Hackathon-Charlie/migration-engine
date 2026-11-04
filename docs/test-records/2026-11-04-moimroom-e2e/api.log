@@ -1,0 +1,9 @@
+{"time":"2026-11-04T17:04:26.5370175+09:00","level":"WARN","msg":"PLATFORM_SECRETS_KEY is not set: the app secrets API answers 503 secrets_not_configured"}
+{"time":"2026-11-04T17:04:26.7935927+09:00","level":"INFO","msg":"environment sealing and storage","env":"src","storage":"none","bucketPrefix":"","sealing":"none"}
+{"time":"2026-11-04T17:04:26.7935927+09:00","level":"INFO","msg":"environment sealing and storage","env":"dst","storage":"none","bucketPrefix":"","sealing":"none"}
+{"time":"2026-11-04T17:04:26.7935927+09:00","level":"WARN","msg":"PLATFORM_RESIDENCY_POLICY_FILE is not set: residency gate disabled; migrations start without a data residency check"}
+{"time":"2026-11-04T17:04:26.7935927+09:00","level":"INFO","msg":"PLATFORM_CAPACITY_GATE is not on: migrations start without a capacity check"}
+{"time":"2026-11-04T17:04:26.795797+09:00","level":"INFO","msg":"PostgreSQL major version gate enabled"}
+{"time":"2026-11-04T17:04:26.8041685+09:00","level":"WARN","msg":"PLATFORM_GITHUB_APP_ID is not set: registering apps from GitHub answers 503 github_not_configured"}
+{"time":"2026-11-04T17:04:26.8041685+09:00","level":"WARN","msg":"PLATFORM_GITHUB_WEBHOOK_SECRET is not set: the GitHub webhook answers 503 and pushes do not deploy"}
+{"time":"2026-11-04T17:04:26.8046823+09:00","level":"INFO","msg":"platform api listening","addr":"127.0.0.1:18280","tokens":2,"admins":0,"insecure":false,"gatewayURL":"http://127.0.0.1:19902","environments":["src","dst"]}

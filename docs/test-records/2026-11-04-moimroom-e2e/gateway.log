@@ -1,0 +1,7 @@
+{"time":"2026-11-04T17:04:25.1515136+09:00","level":"INFO","msg":"gateway listening","listen":"127.0.0.1:18200","adminAddr":"127.0.0.1:19902","auth":true,"backends":["src=http://127.0.0.1:18201","dst=http://127.0.0.1:18202"],"stateFile":"C:/Users/SSAFY/AppData/Local/Temp/claude/9547001a4aafcf2a/2bbd16b7-16f8-4400-8c39-97078d84e89d/scratchpad/moimroom-e2e/platform/.hopcharlie/e2e-moimroom/gateway-state.json","appDomain":"","defaultApp":"app"}
+{"time":"2026-11-04T17:04:31.6459358+09:00","level":"INFO","msg":"admin action","action":"weights","readWeights":{"dst":10,"src":90},"previous":{"dst":0,"src":100}}
+{"time":"2026-11-04T17:04:41.6535132+09:00","level":"INFO","msg":"admin action","action":"weights","readWeights":{"dst":50,"src":50},"previous":{"dst":10,"src":90}}
+{"time":"2026-11-04T17:04:51.706109+09:00","level":"INFO","msg":"admin action","action":"hold","changed":true,"hold":1,"result":"ok","inFlightAtHold":4,"drainMillis":43}
+{"time":"2026-11-04T17:05:07.3830251+09:00","level":"INFO","msg":"admin action","action":"route","backend":"dst","previous":"src","writesHeld":true}
+{"time":"2026-11-04T17:05:07.3922193+09:00","level":"INFO","msg":"admin action","action":"release","changed":true,"backend":"dst","released":5,"heldMillis":15723,"dispatchMillis":6}
+{"time":"2026-11-04T17:05:51.1532794+09:00","level":"WARN","msg":"backend unhealthy","backend":"src","err":"Get \"http://127.0.0.1:18201/healthz\": EOF"}

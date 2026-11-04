@@ -12,6 +12,9 @@
 | 2026-11-04 | 로컬 게이트웨이 리허설 (CNPG 1.30.1, gateway http, hello 앱, 부하) | 통과, 원복 직후 쓰기 503 8건 | [아래](#2026-11-04-로컬-게이트웨이-리허설) |
 | 2026-11-04 | 엔진 단계별 엣지·실패 케이스 단위 테스트 | 통과, 결함 1건 수정 | [아래](#2026-11-04-엔진-단계별-엣지실패-케이스) |
 | 2026-11-04 | 플랫폼 점진 카나리와 실패 시 롤백 e2e (kind) | 3/3 통과 (1회차 observe 시나리오 설계 오류) | [아래](#2026-11-04-점진-카나리와-실패-시-롤백-e2e) |
+| 2026-11-04 | platform 버킷 레지던시 측정 (probe·Rego·inspect API, 실 MinIO 2대) | 통과, 결함 1건 수정 | [아래](#2026-11-04-platform-버킷-레지던시-측정) |
+| 2026-11-04 | platform 동등성 기록 모드 (RBAC·Prometheus, 실 k3s·Prometheus) | 통과 | [아래](#2026-11-04-platform-동등성-기록-모드) |
+| 2026-11-04 | moimroom e2e (부하 중 DB·사진 이전 + 원본 정리, kind 새로 생성) | 통과, 쓰기 대기 15.7초, 실패 요청 0, 전체 7분 10초 | [아래](#2026-11-04-moimroom-e2e-시간-측정) |
 
 ---
 
@@ -174,3 +177,89 @@ kind 클러스터 `hopgw`는 남겨 둠
 
 - 단위 테스트: platform `go test ./...` 중 `tools/apidoc`만 실패(로컬 전용 기존 실패, main에서도 같음). `-race` internal/runs·api 통과. frontend `npm run typecheck`, `npm test` 155/155 통과
 - 검증하지 않은 것: 실제 EKS/GKE, 클러스터 사이 네트워크, 정상 이전 후 observe 위반이 없을 때 자동 롤백이 일어나지 않는지(단위 테스트만), CLI 표시(`charlie migrate watch`는 아직 verdict를 모름), 각 시나리오 1회 실행
+
+## 2026-11-04 platform 버킷 레지던시 측정
+
+- 대상: platform `feat/bucket-residency` (기준 main `6028239`), worktree `platform-bucket-residency`
+- 실행
+  - `go test ./...` (29개 패키지) 통과. `tools/apidoc` TestRenderRepoContract만 실패하는데, 기준 커밋에서도 같이 실패함(이 변경과 무관)
+  - `-race` internal/preflight/..., internal/plans 통과. `go vet ./...`, `git diff --check` 깨끗함
+  - Rego 변이 확인: 위치, 프리픽스, 복제 규칙을 하나씩 깨면 해당 테스트가 실패함
+  - 실 MinIO: 로컬 `pgsty/minio:RELEASE.2026-08-04T00-00-00Z` 2대(A 127.0.0.1:19000 원본, B 127.0.0.1:19001 `MINIO_REGION=kr-onprem-dr`), `-tags minio`
+    - bucketprobe: 1단계 프리픽스, 실제 bucket replication(A→B, `arn:minio:replication::…:photos-dr-…`에서 대상 이름 추출), ILM tier 전환 감지, B의 region 읽기, kyc/ 샘플(키·메타데이터 값 없이 `kr_resident_number` 1, `email` 1 개수만)
+    - gate 전체(실 probe + 내장 Rego): 선언 망 안 → 허용, 망 밖 CIDR → `bucket_endpoint_outside_network`, 미분류 hosts/ → `unclassified_prefix`, kr-only hosts/를 일본으로 → `prefix_country_not_allowed`
+  - 원시 로그(자격 증명 줄 제외): [2026-11-04-bucket-residency-live-minio.log](2026-11-04-bucket-residency-live-minio.log)
+- 발견·수정한 결함: region이 설정된 MinIO에 원격 region이 비어 있으면 GetBucketLocation만 통과하고 복제·목록 조회가 서명 region 불일치로 실패함(`bucket_probe:replication_failed`). 저장소가 알려 준 region으로 다시 서명하도록 고침. 가짜 S3 서버로는 재현되지 않았고 실 MinIO에서만 드러남
+- 기존 불안정(무관): internal/api `TestRedeployEnvironments`, `TestListAndGetDeployments`가 가끔 실패(환경 순서 gke/eks가 바뀜, #52 코드)
+- PR #54 CI 1회차 실패: Formatting 단계(gofmt)에서 `internal/plans/residency_test.go`(import 순서), `internal/preflight/residency/bucket_test.go`(map 정렬)가 걸림. 테스트 실패 아님. 로컬 Windows checkout이 CRLF라 `gofmt -l`이 모든 파일을 보고해 놓쳤음. gofmt로 고친 뒤 LF로 내보낸 트리를 `golang:1.26` 컨테이너(Go 1.26.10)와 `postgres:17.11-alpine`으로 CI 단계 그대로 실행: vet -race, gofmt, 생성 타입 일치, `go test -race ./...`(실패 0, `tools/apidoc` 포함, 로컬 실패는 CRLF 탓으로 확인), `-tags minio` vet·test 통과. 푸시 후 CI go·shell 통과. 그 사이 main에 새 커밋은 없었음
+- 검증하지 않은 것: 실제 AWS S3·GCS 버킷(가짜 HTTP 서버로만 확인), 실제 온프렘 Tailscale 주소, rclone 실제 복사와의 연결(rclone 바이너리 없음), AI 라벨 제안(ai-sandbox, 아직 미구현), 콘솔 표시
+
+## 2026-11-04 moimroom e2e 시간 측정
+
+- 대상: platform `test/e2e/moimroom/run.sh` (`KEEP=1`). 다른 작업과 섞이지 않게 세 레포를 `origin/main`으로 따로 복제해서 실행
+  - platform `519a969` (API 안의 엔진은 go.mod 고정값 migration-engine `f3b9fd8`, 11/02)
+  - migration-engine `c336658` (decommission용 `hopmigrate`만 이 버전으로 빌드)
+  - moimroom `eec6253`
+- 환경: Windows 11, Docker Desktop(WSL2 12GB), kind v0.33.0, kind 클러스터 `hop-moimroom` 새로 생성, CNPG 1.25.1(운영은 1.30.1)
+- 원시 기록: [2026-11-04-moimroom-e2e/](2026-11-04-moimroom-e2e/) (`run.log`는 줄마다 시각을 붙인 전체 출력, `run-state.json`은 엔진 단계별 시각과 증거)
+
+결과
+
+| 항목 | 값 |
+|---|---|
+| run | succeeded |
+| 카나리 10% / 50% | 통과 (72건 p95 18ms / 327건 p95 6ms, 에러 0%) |
+| 전환 후 observe 30초 | 3회 모두 통과 (약 1,000건/10초, p95 60~71ms, 에러 0%) |
+| 쓰기 대기(downtime, 게이트웨이가 쓰기를 붙잡은 시간) | 15,685 ms |
+| 가장 느린 예약 응답 | 15.764초 (쓰기 대기 중에 들어온 요청) |
+| 게이트웨이 요청 | 6,445건, 실패 0 |
+| 예약 / 사진 / 읽기 | 2,260건 실패 0 / 32장 실패 0 / 4,857건 실패 0 (notFound 141은 카나리 중 대상에 아직 안 넘어온 행·사진, 실패로 세지 않음) |
+| verify | missingRows 0, missingWrites 0, missingFiles 0. 기록한 예약 2,260건 모두 새 primary에 있음, 사진 32장 모두 같은 바이트 |
+| decommission | PASSED. 옛 앱 중지, 20초 관찰 중 옛 DB 세션 0·원본 요청 0, 차단 확인, 스모크 2/2 |
+
+소요 시간 (run.log 시각 기준)
+
+| 단계 | 시간 | 비고 |
+|---|---|---|
+| 빌드 (kind, api, gateway, driver, hopmigrate, moimroom 이미지) | 83초 | Go 모듈·이미지 캐시 있는 상태 |
+| kind 생성, 이미지 적재, CNPG operator | 72초 | |
+| MinIO 2대 | 27초 | |
+| 원본 DB 생성 | 77초 | |
+| 대상 replica 생성 (이전 전에 미리) | 23초 | |
+| moimroom Helm 릴리스 2개 | 13초 | |
+| 플랫폼 저장소, 게이트웨이, API | 21초 | |
+| **이전 run 전체** | **67.5초** | 아래 상세 |
+| decommission | 37초 | 관찰 20초 고정 포함 |
+| **전체** | **430초 (7분 10초)** | |
+
+이전 run 67.5초의 내역
+
+| 구간 | 시간 |
+|---|---|
+| precheck ~ delta (대상이 미리 떠 있어 바로 통과) | 약 1초 |
+| 카나리 10% → 50% | 20초 (단계당 10초, 설정값) |
+| 전환 승인 | 즉시 (드라이버가 바로 승인) |
+| fence (쓰기 붙잡기, 마지막 파일 동기화 0.34초) | 0.4초 |
+| switchover: fence gate(해시 비교) | 49 ms |
+| switchover: 원본 demote 요청 → 대상 promote 요청 | 약 2초 |
+| switchover: promote 요청 → 대상이 쓰기 받을 준비 완료 | 약 13초 |
+| cutover (쓰기 풀고 대상으로 보냄) | 0.02초 |
+| verify, finalize | 0.7초 |
+| 전환 후 observe | 30초 (설정값) |
+
+- 쓰기 대기 15.7초 중 약 13초가 "대상 promote 뒤 쓰기를 받을 준비가 될 때까지"다. 이 구간에 CNPG가 무엇을 하는지는 엔진 이벤트에 기록이 없어 확인하지 못함. 쓰기 대기를 줄이려면 여기부터 봐야 함
+- 같은 테스트의 지난 기록(2026-11-02, kind 재사용, README)은 쓰기 대기 15.3초로 비슷함
+- 검증하지 않은 것: 클러스터 사이 네트워크(두 환경이 kind 클러스터 하나, 네임스페이스 하나), Tailscale 경로, 운영 CNPG 버전(1.30.1), 최신 엔진 main이 API 안에서 도는 경우(platform이 `f3b9fd8` 고정), 롤백 시나리오(이 테스트는 정방향 한 번만)
+- 정리: 로그를 옮긴 뒤 `down.sh`로 이 테스트가 만든 kind 클러스터 `hop-moimroom`, 저장소 컨테이너, 작업 디렉터리를 지움
+
+## 2026-11-04 platform 동등성 기록 모드
+
+- 대상: platform `feat/parity-audit` (기준 main `c846c18`) → PR #55
+- 실 검사: k3s `v1.31.4-k3s1` 컨테이너(namespace shop, SA shop-api, configmaps get만 허용) + `prom/prometheus:v2.55.1`(job shop-api up, shop-down down), `cmd/api` TestParityLive로 실제 `parityGate` 연결 경로 사용
+  - 기대대로인 대상: identity pass(규칙 3개 authorization_matches), metrics-target scrape_verified, 나머지 probe_not_configured, passed=false
+  - 어긋난 대상: identity rbac_mismatch(list-pods fail), metrics target_not_up
+  - 원시 로그: [2026-11-04-parity-audit-live.log](2026-11-04-parity-audit-live.log)
+- 단위·API: 실패 보고서와 검사 오류가 시작을 막지 않음, 용량 거부·롤백에서는 실행 안 함, 감사 로그 기록, 설정 검증, 30초 상한
+- CI 재현: LF로 내보낸 트리를 golang:1.26 + postgres:17.11-alpine 컨테이너에서 vet -race, gofmt, 생성 타입 일치, `go test -race ./...`(31개 패키지, 실패 0), `-tags minio` 통과
+- 발견·수정: RBAC 규칙의 `allowed`를 빠뜨리면 조용히 "거부"가 되던 설정 설계를 필수 필드로 바꿈
+- 검증하지 않은 것: 실제 EKS/GKE와 운영 Prometheus 주소, 플랫폼 자격 증명의 대상 클러스터 SAR 생성 권한, infra 설정(운영에서는 꺼져 있음)

@@ -1,0 +1,21 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata: { name: hello-dst, namespace: hello }
+spec:
+  instances: 1
+  smartShutdownTimeout: 5
+  storage: { size: 1Gi, storageClass: gp3 }
+  bootstrap:
+    pg_basebackup: { source: hello-src, database: app, owner: app, secret: { name: hello-src-app } }
+  replica: { self: hello-dst, primary: hello-src, source: hello-src }
+  externalClusters:
+    - name: hello-src
+      connectionParameters: { host: hello-src-rw.hello.svc, user: streaming_replica, dbname: postgres, sslmode: verify-full }
+      sslKey: { name: hello-src-replication, key: tls.key }
+      sslCert: { name: hello-src-replication, key: tls.crt }
+      sslRootCert: { name: hello-src-ca, key: ca.crt }
+    - name: hello-dst
+      connectionParameters: { host: hello-dst-rw.hello.svc, user: streaming_replica, dbname: postgres, sslmode: verify-full }
+      sslKey: { name: hello-dst-replication, key: tls.key }
+      sslCert: { name: hello-dst-replication, key: tls.crt }
+      sslRootCert: { name: hello-dst-ca, key: ca.crt }

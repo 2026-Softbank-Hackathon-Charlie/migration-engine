@@ -1,0 +1,22 @@
+run hello-src-to-dst-20261105-070320 (state: .hopcharlie\runs\hello-src-to-dst-20261105-070320.json)
+16:03:20.080 ▶ precheck
+16:03:22.464 ✔ precheck (2383 ms)
+16:03:22.466 ▶ prepare
+16:03:22.482   prepare applying target manifest manifest=<work>/target.yaml
+16:04:52.850 ✔ prepare (90384 ms)
+16:04:52.852 ▶ presync
+16:04:52.945   presync replication lag lagBytes=0 sourceLsn=0/40093F8 targetLsn=0/40093F8
+16:04:52.948 ✔ presync (94 ms)
+16:04:52.952 ▶ delta
+16:04:52.987   delta replication lag lagBytes=0 sourceLsn=0/40094B8 targetLsn=0/40094B8
+16:04:52.989 ✔ delta (39 ms)
+16:04:52.992 ▶ fence
+16:04:52.995   fence writes held at gateway
+16:04:53.012 ✔ fence (20 ms)
+16:04:53.015 ▶ switchover
+16:04:53.247   switchover fence gate passed tables=2
+16:04:53.364   switchover source demotion requested newPrimary=hello-dst
+16:04:54.452   switchover target promotion requested oldPrimary=hello-src
+16:07:53.018 ✘ switchover: target did not settle after promotion: context deadline exceeded
+16:07:53.020 ! switchover [halt] target promotion was requested; not rolling back automatically (split-brain guard). Operator action required. trafficOnTarget=false writesHeld=true
+error: halted at switchover: target did not settle after promotion: context deadline exceeded

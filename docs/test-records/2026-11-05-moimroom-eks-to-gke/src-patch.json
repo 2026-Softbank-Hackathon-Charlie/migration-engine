@@ -1,0 +1,9 @@
+{"spec":{
+ "certificates":{"serverAltDNSNames":["db-eks.hopcharlie-db-network.svc.cluster.local"]},
+ "replica":{"self":"moimroom-db","primary":"moimroom-db","source":"moimroom-db-gke"},
+ "externalClusters":[
+  {"name":"moimroom-db","connectionParameters":{"host":"moimroom-db-rw.moimroom.svc","user":"streaming_replica","dbname":"postgres","sslmode":"verify-full"},
+   "sslKey":{"name":"moimroom-db-replication","key":"tls.key"},"sslCert":{"name":"moimroom-db-replication","key":"tls.crt"},"sslRootCert":{"name":"moimroom-db-ca","key":"ca.crt"}},
+  {"name":"moimroom-db-gke","connectionParameters":{"host":"db-gke.hopcharlie-db-network.svc.cluster.local","user":"streaming_replica","dbname":"postgres","sslmode":"verify-full"},
+   "sslKey":{"name":"moimroom-db-gke-replication","key":"tls.key"},"sslCert":{"name":"moimroom-db-gke-replication","key":"tls.crt"},"sslRootCert":{"name":"moimroom-db-gke-ca","key":"ca.crt"}}
+ ]}}

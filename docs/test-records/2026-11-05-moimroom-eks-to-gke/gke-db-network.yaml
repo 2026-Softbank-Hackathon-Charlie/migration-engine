@@ -1,0 +1,8 @@
+enabled: true
+clusterId: gke
+localDatabase: {namespace: charlie-apps, cluster: moimroom-db-gke}
+ingress: {hostname: hop-db-gke-moimroom, tag: "tag:hop-db-gke"}
+egress:
+  tag: "tag:hop-db-client-gke"
+  peers:
+    eks: {hostname: hop-db-gke-to-eks-moimroom, tailnetFQDN: hop-db-eks-moimroom.tail567fe8.ts.net}

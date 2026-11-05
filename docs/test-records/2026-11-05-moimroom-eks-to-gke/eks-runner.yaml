@@ -1,0 +1,56 @@
+# Migration runner for moimroom AWS -> GCP. Runs hopmigrate, rclone and the load
+# generator inside the workload EKS cluster. Its own namespace; in moimroom it may
+# read pods/services/events and get/patch the CNPG Cluster only (no Secrets).
+apiVersion: v1
+kind: Namespace
+metadata: {name: hop-migrate}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: moimroom-runner, namespace: hop-migrate}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: moimroom-runner, namespace: moimroom}
+rules:
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [clusters]
+    verbs: [get, list, watch, patch, update]
+  - apiGroups: [""]
+    resources: [pods, services, events]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: moimroom-runner, namespace: moimroom}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: moimroom-runner}
+subjects: [{kind: ServiceAccount, name: moimroom-runner, namespace: hop-migrate}]
+---
+# The db-network chart lets only the CNPG pods use the egress proxy; the engine
+# reads the target DB through it too.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: hop-migrate-to-db-gke, namespace: hopcharlie-db-network}
+spec:
+  podSelector:
+    matchLabels: {tailscale.com/managed: "true", tailscale.com/parent-resource: db-gke, tailscale.com/parent-resource-ns: hopcharlie-db-network, tailscale.com/parent-resource-type: svc}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: hop-migrate}}}]
+      ports: [{protocol: TCP, port: 5432}]
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: moimroom-runner, namespace: hop-migrate, labels: {app: moimroom-runner}}
+spec:
+  serviceAccountName: moimroom-runner
+  restartPolicy: Never
+  containers:
+    - name: runner
+      image: ghcr.io/cloudnative-pg/postgresql:18.6-minimal-trixie@sha256:64abc98a4387361afd6821a3a99f975763bbd87bbdde9449e75ad6002528a318
+      command: [sleep, infinity]
+      workingDir: /work
+      envFrom: [{secretRef: {name: moimroom-runner-env}}]
+      resources: {requests: {cpu: 200m, memory: 256Mi}, limits: {memory: 1Gi}}
+      volumeMounts: [{name: work, mountPath: /work}]
+  volumes: [{name: work, emptyDir: {}}]

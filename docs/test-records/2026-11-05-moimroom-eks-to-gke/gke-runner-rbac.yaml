@@ -1,0 +1,27 @@
+# The EKS runner's access to GKE: CNPG Cluster get/patch and read-only pods,
+# services, events in charlie-apps. No Secrets. Delete after the migration.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: moimroom-runner, namespace: charlie-apps}
+---
+apiVersion: v1
+kind: Secret
+metadata: {name: moimroom-runner-token, namespace: charlie-apps, annotations: {kubernetes.io/service-account.name: moimroom-runner}}
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: moimroom-runner, namespace: charlie-apps}
+rules:
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [clusters]
+    verbs: [get, list, watch, patch, update]
+  - apiGroups: [""]
+    resources: [pods, services, events]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: moimroom-runner, namespace: charlie-apps}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: moimroom-runner}
+subjects: [{kind: ServiceAccount, name: moimroom-runner, namespace: charlie-apps}]

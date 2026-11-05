@@ -16,6 +16,8 @@
 | 2026-11-04 | platform 동등성 기록 모드 (RBAC·Prometheus, 실 k3s·Prometheus) | 통과 | [아래](#2026-11-04-platform-동등성-기록-모드) |
 | 2026-11-04 | moimroom e2e (부하 중 DB·사진 이전 + 원본 정리, kind 새로 생성) | 통과, 쓰기 대기 15.7초, 실패 요청 0, 전체 7분 10초 | [아래](#2026-11-04-moimroom-e2e-시간-측정) |
 | 2026-11-05 | 실제 EKS 이전 리허설 (hello DB, 엔진·부하 클러스터 안에서, 왕복) | 엔진 3/4 성공 (1회차 halt, 원인 port-forward), 응답한 쓰기 누락 0 | [아래](#2026-11-05-실제-eks-이전-리허설) |
+| 2026-11-05 | 실제 AWS ↔ GCP 이전 리허설 (EKS ↔ GKE, Tailscale operator 경로, 부하 중) | gateway 없이: EKS→GKE 성공, GKE→EKS rolled_back. **gateway(http)로 왕복 2/2 성공, 실패 요청 0, 쓰기 대기 17.4초, 응답한 쓰기 누락 0** | [아래](#2026-11-05-실제-aws--gcp-이전-리허설) |
+| 2026-11-05 | **운영 moimroom 실제 이전 AWS → GCP** (공개 URL 부하 중, 운영 게이트웨이) | 엔진 **halted** at switchover (대상 승격은 성공, port-forward로 안정 확인 실패) → 운영자가 수동 cutover. 응답한 예약 1,487건·사진 70장 누락 0, 쓰기 실패 9건(보류 55초 초과 503), **쓰기 공백 3분 36초** | [아래](#2026-11-05-운영-moimroom-실제-이전-aws--gcp) |
 
 ---
 
@@ -306,3 +308,150 @@ kind 클러스터 `hopgw`는 남겨 둠
 ### 남긴 것
 
 - 워크로드 EKS 네임스페이스 `hello`(CNPG 두 개, 실행 파드 `hello-runner`, Role, gp3 1Gi 두 개)는 다음 단계(EKS → GKE)에 다시 쓰려고 남겨 둠. `kubectl delete ns hello`로 정리
+
+## 2026-11-05 실제 AWS ↔ GCP 이전 리허설
+
+- 대상: migration-engine main `399f278`, 부하 프로그램은 위 EKS 리허설과 같음(시작 id를 시각 기반으로 고친 판)
+- 원본: 워크로드 EKS `hello/hello-src` (PG 18.6, CNPG 1.30.1). 위 EKS 리허설 4회차 뒤의 primary
+- 대상: GKE `charlie-dev-gcp-workload`의 `hello/hello-gke` (같은 이미지 digest, CNPG 1.30.1, standard-rwo 1Gi). 미리 standby로 만들어 둠(`target.manifest` 생략). 기존 GCP의 `moimroom-gcp-db` 등은 건드리지 않음
+- DB 경로: infra [ADR 0048](https://github.com/2026-Softbank-Hackathon-Charlie/infra/blob/main/docs/adr/0048-connect-cloud-databases-with-scoped-migration-access.md) 방식. 양쪽 클러스터에 Tailscale operator 1.104.4와 `hopcharlie-db-network` 차트(hello 값)를 설치. 각 DB는 `db-eks.hopcharlie-db-network.svc.cluster.local`, `db-gke.hopcharlie-db-network.svc.cluster.local` 로컬 Service로 상대에 닿음. 기존 앱 라우터(ADR 0037)는 바꾸지 않음
+- 복제 TLS: `verify-full` 유지. 양쪽 CNPG `spec.certificates.serverAltDNSNames`에 상대가 쓰는 프록시 이름을 넣음
+- 실행: 엔진과 부하는 EKS `hello` 네임스페이스의 실행 파드. GKE는 `hello` 네임스페이스에만 권한이 있는 ServiceAccount 토큰 kubeconfig로 접근(GKE API는 AWS NAT IP만 허용하며 EKS 파드가 그 IP로 나감)
+- `gateway.mode: none`, 부하는 0.1초마다 한 행(a = EKS, b = GKE 프록시)
+- 입력과 원시 로그: [2026-11-05-eks-gke-hello-rehearsal/](2026-11-05-eks-gke-hello-rehearsal/) (토큰이 든 kubeconfig는 넣지 않음)
+
+### 준비 중 확인한 것
+
+| 항목 | 결과 |
+|---|---|
+| GKE 파드 → `db-eks` → EKS hello-src:5432 | 접속됨, 서버 인증서 `CN=hello-src-rw` |
+| hello-gke 생성(pg_basebackup over tailnet) | 16:58:06 생성 → 16:59:14 healthy (약 1분, 데이터 작음) |
+| hello-gke 복제 | `pg_is_in_recovery = t`, `streaming`, sender `db-eks...` |
+| EKS 실행 파드 → `db-gke` → GKE hello-gke:5432 | 접속됨, app 계정 로그인 성공 |
+| 엔진 `status` | 양쪽 클러스터 healthy, 복제 지연 0 바이트 |
+
+### 결과
+
+| # | 방향 | 엔진 결과 | 엔진 다운타임 | 부하 |
+|---|---|---|---|---|
+| X1 | EKS → GKE | **succeeded** | 11,857 ms | 응답한 쓰기 2,329건, GKE·EKS 양쪽 누락 0. 실패 13건, 최장 공백 7.4초 |
+| X2 | GKE → EKS (원복 방향) | **rolled_back** (fence gate: `public.visits` 불일치) | – | 응답한 쓰기 2,396건, 양쪽 누락 0. 실패 0, 최장 공백 0.5초 |
+
+- X1 흐름: 08:01:12.1 원본(EKS) 강등 요청 → 08:01:13.3 대상(GKE) 승격 요청 → 08:01:19.9 부하가 GKE에 쓰기 시작 → 08:01:24.8 완료. 끝난 뒤 EKS `hello-src`는 `db-gke`로 GKE를 streaming으로 따라감. `hopmigrate verify` 누락 0
+- X2: delta까지 복제 지연 0 바이트였지만, `gateway.mode: none`이라 fence에서 쓰기를 실제로 붙잡지 않는다. fence gate가 양쪽을 비교하던 약 0.5초 동안 부하가 원본(GKE)에 계속 썼고, 클라우드 사이 복제가 따라오기 전에 비교해 불일치가 났다. 엔진은 강등 요청 전에 롤백했고 GKE가 primary로 계속 서비스했다. 설계대로의 안전한 중단이다
+- 해석: X1이 같은 경쟁에서 통과한 것은 타이밍이다. 게이트웨이 쓰기 보류 없이는 fence gate 통과가 보장되지 않는다. 실제 흐름(게이트웨이 http)에서 다시 확인해야 한다
+
+### 게이트웨이 경유 왕복 (같은 날, X2 뒤)
+
+X2에서 본 경쟁을 없애려고 쓰기를 HTTP로 플랫폼 게이트웨이(platform main `7568769`, `cmd/gateway`)를 거치게 하고 `gateway.mode: http`로 다시 돌렸다.
+
+- 실행 파드 안에 hello 앱 두 개([hello-app.go](2026-11-05-eks-gke-hello-rehearsal/hello-app.go))와 게이트웨이를 띄움([services.sh](2026-11-05-eks-gke-hello-rehearsal/services.sh)). `app-eks`는 EKS hello-src에, `app-gke`는 `db-gke` 프록시로 GKE hello-gke에 쓴다. **두 앱 프로세스 모두 EKS 파드 안에 있다.** 클라우드가 다른 것은 DB뿐이고, 앱 트래픽이 클라우드를 넘는 경로는 시험하지 않았다
+- 부하: 클라이언트 하나가 0.1초마다 `POST /visits?id=N`을 게이트웨이로 보냄(앞 요청이 끝나야 다음 요청). 게이트웨이 기본값(max-hold 55초), 관리 API 인증 끔(파드 loopback)
+
+| # | 방향 | 엔진 결과 | 엔진 다운타임 | 게이트웨이 hold | 부하 |
+|---|---|---|---|---|---|
+| G1 | GKE → EKS | **succeeded** | 17,398 ms | 17,408 ms, 붙잡은 쓰기 1건 | **실패 0**, 응답한 쓰기 2,229건(GKE 211 → EKS 2,018) 양쪽 누락 0, 가장 느린 쓰기 17.4초 |
+| G2 | EKS → GKE | **succeeded** | 17,383 ms | 17,383 ms, 붙잡은 쓰기 1건 | **실패 0**, 응답한 쓰기 2,223건(EKS 209 → GKE 2,014) 양쪽 누락 0, 가장 느린 쓰기 17.9초 |
+
+- 두 회차 모두 fence gate가 통과했다. 쓰기를 붙잡은 뒤 비교하므로 X2와 같은 불일치가 없다
+- 흐름(G1): 08:17:17.9 hold → 08:17:18.5 fence gate 통과 → 08:17:18.6 GKE 강등 요청 → 08:17:20.6 EKS 승격 요청 → 08:17:35.3 EKS 안정 확인, release(`backend: eks`). 붙잡힌 쓰기는 EKS로 보내져 201
+- 다운타임 17초의 대부분은 승격 뒤 새 primary가 CNPG 재시작을 마치고 엔진이 두 번 연속 정상을 확인할 때까지다(승격 요청 → 완료 약 15초). 같은 클러스터 안(8~14초)보다 길다. 클라우드 사이 경로 때문인지는 나누어 재지 않았다
+- `hopmigrate verify` 누락 0. `visits` 14,586행
+- 원시 로그: `gw-*-engine.log`, `gw-*-writer.log`, `gw-gateway.log`
+
+### 준비하며 바꾼 것과 발견한 것
+
+- tailnet 정책에 ADR 0048 조각(태그, TCP 5432 grant 3개, accept 테스트 3개)을 병합했다. 기존 `* → *` grant가 있어 deny 테스트는 저장이 거부되므로 넣지 않았다. 그래서 DB 경로는 아직 격리되지 않는다
+- OAuth client 2개(`eks`, `gke`)를 API로 만들고 client secret은 각 클러스터 `operator-oauth` Secret으로만 넘겼다. operator 설치(helm)는 Claude Code 권한 분류기가 거부해 사용자가 직접 실행했다
+- `hopcharlie-db-network` 차트는 DB 네임스페이스에 primary 파드의 Ingress/Egress를 프록시 5432로만 여는 정책을 만든다. 기존 DNS·API·CNPG 허용 정책이 있다는 전제다. `hello`에는 정책이 없어서 그대로면 DB가 끊기므로 시험용 전부 허용 정책(`hello-allow-all.yaml`)을 먼저 넣었다
+- 차트의 egress 프록시는 로컬 CNPG 파드에서 오는 5432만 받는다. 엔진 실행 파드가 상대 DB에 닿도록 시험용 정책(`*-hello-to-proxy.yaml`)을 더했다. 플랫폼 경로에서는 management 프로필이 API 파드를 허용한다
+- 원본 CA Secret에는 개인키(`ca.key`)가 들어 있다. 대상은 `ca.crt`만 필요하므로 복사본에서 개인키를 지웠다
+- `helm template`은 `--kube-version` 없이 실행하면 차트의 `kubeVersion: >=1.35.0-0 <1.37.0-0` 제약에 걸린다(로컬 helm 기본값 1.37)
+
+### 검증하지 않은 것
+
+- 카나리(읽기 비율), 클라우드를 넘는 앱 HTTP 트래픽(앱은 모두 EKS 파드 안), 플랫폼 API 경로(management 프로필, 임시 RoleBinding helper), 파일 이전, 여러 클라이언트가 동시에 쓰는 부하
+- DERP와 직접 연결 중 어느 쪽으로 붙었는지, 큰 DB의 base backup 처리량
+
+### 남긴 것
+
+- EKS `hello`: hello-src(지금 복제본, GKE를 따라감), 실행 파드, Role, 시험용 NetworkPolicy, 복사한 hello-gke CA·복제 Secret
+- GKE `hello`: hello-gke(지금 primary), 실행용 ServiceAccount와 토큰, Role, 시험용 NetworkPolicy, 복사한 hello-src CA(인증서만)·복제·앱 Secret
+- 양쪽 `hopcharlie-db-network`: operator, db-network 릴리스, 시험용 NetworkPolicy, `operator-oauth`
+- tailnet: 정책 병합분, OAuth client 2개, 장치 6개(operator 2, 프록시 4)
+
+## 2026-11-05 운영 moimroom 실제 이전 AWS → GCP
+
+운영 중인 moimroom을 공개 URL(`https://moimroom.hopcharlie.dev`)로 부하를 받는 상태에서 EKS → GKE로 옮겼다. 사용자 승인 아래 실행했다. 입력과 원시 로그: [2026-11-05-moimroom-eks-to-gke/](2026-11-05-moimroom-eks-to-gke/)
+
+- 엔진: migration-engine main `9c10ec7` (Windows 빌드, 로컬 PC에서 실행)
+- 원본: 워크로드 EKS `moimroom/moimroom-db` (CNPG 1.30.1, PG 18.6, Argo `moimroom-eks`가 관리, infra #67 ignoreDifferences 적용 확인)
+- 대상: GKE `charlie-apps/moimroom-db-gke` 새 standby. 기존 `charlie-apps/moimroom-gcp-db`는 건드리지 않음
+- DB 경로: infra ADR 0048 Tailscale operator 프록시(`db-eks`, `db-gke`), `sslmode=verify-full`
+- 게이트웨이: 운영 관리 EKS `charlie-platform/hopcharlie-gateway`(`c4cceba`), 앱 `moimroom` 범위(`/apps/moimroom`)
+- 파일: S3 `hopcharlie-eks-moimroom` → GCS `charlie-414068132732-moimroom-gcp` (rclone 1.75.2, 시작 전 두 버킷 모두 비어 있음)
+- 부하: [load/main.go](2026-11-05-moimroom-eks-to-gke/load/main.go) 를 워크로드 EKS 파드에서 7분. 예약 2명(45~59일 뒤 빈 1시간 칸, 손님 이름 `migration-rehearsal`), 조회 2명, 3초마다 호스트 사진 업로드. 끝난 뒤 업로드한 사진을 모두 다시 받아 SHA-256 비교
+
+### 준비 (이전 전, 트래픽은 EKS 100%)
+
+1. DB 네트워크 릴리스를 hello → moimroom으로 전환하고 hello 리허설 자원 삭제
+   - Helm 4 기본 server-side apply가 Tailscale operator 소유 필드(`spec.externalName`)와 충돌해 실패 → `--server-side=false`로 재실행. 실패한 시도는 moimroom 네임스페이스에 허용 정책만 먼저 만들었음
+   - **GKE operator DNS 차단**: 차트 정책은 DNS를 kube-dns 파드로만 허용하는데 GKE는 NodeLocal DNSCache(hostNetwork)가 응답한다. operator가 Tailscale API를 못 불러 ingress 프록시를 못 만들었다. operator에만 53 포트를 여는 [gke-operator-dns.yaml](2026-11-05-moimroom-eks-to-gke/gke-operator-dns.yaml) 추가로 해결. 차트 버그로 infra에 수정 필요
+   - `charlie-apps`에는 NetworkPolicy가 없어서 차트 정책이 새 DB를 고립시키지 않도록 새 DB 파드에만 [gke-db-baseline.yaml](2026-11-05-moimroom-eks-to-gke/gke-db-baseline.yaml) 적용
+2. Secret 복사(값은 출력하지 않음, [secretx.py](2026-11-05-moimroom-eks-to-gke/secretx.py)): EKS → GKE 원본 CA(인증서만)·복제 인증서·app 계정·새 DB 접속 URI·호스트 코드, GKE → EKS 대상 CA(인증서만)·복제 인증서
+3. 원본에 인증서 SAN → 대상 생성 → 원본에 `replica`·`externalClusters` 순서로 패치. 원본은 재시작 없음, 공개 healthz 200 유지. Argo `moimroom-eks`는 Synced 유지(ignoreDifferences 동작 확인)
+4. 대상 생성 후 pg_basebackup 약 20초, `streaming` lag 0
+5. GKE 앱 `moimroom-gcp`의 `DATABASE_URL`을 새 DB로, `SEED_SPACES=false`로 바꾸고 1대 기동(standby라 스키마 마이그레이션 건너뜀 로그 확인). 게이트웨이 `moimroom`에 `gke` 백엔드(`http://10.80.0.7:80`) 추가, 쓰기·읽기는 EKS 유지. 두 백엔드 healthy
+
+### 실행 (KST)
+
+| 시각 | 사건 |
+|---|---|
+| 22:14:08 | 부하 시작 |
+| 22:14:37 ~ 22:14:41 | precheck ~ delta (lag 0, 파일 presync·delta) |
+| 22:14:41.1 | fence: 게이트웨이 쓰기 보류 |
+| 22:14:42.1 | fence gate 통과 (테이블 5) |
+| 22:14:42.2 | 원본 강등 요청 |
+| 22:14:43.4 | 대상 승격 요청 |
+| 22:14:55 | **GKE DB 승격 완료** (Postgres 로그: `server promoted`, 재시작 없음) |
+| 22:15:36, 22:16:31, 22:17:26 | 보류 55초 초과로 쓰기 503 `hold_timeout` (회당 예약 2, 사진 1) |
+| 22:17:41.8 | **엔진 halted**: `target did not settle after promotion` (switchoverTimeout 3분). 승격 요청 뒤라 자동 롤백 안 함 |
+| 22:18:17 | 운영자가 DB 상태(GKE primary, EKS replica) 확인 후 게이트웨이 `route gke` + `writes/release` 수동 실행 |
+| 22:21 | 부하 종료 |
+
+### 결과
+
+| 항목 | 값 |
+|---|---|
+| 예약 성공 / 실패 / 충돌 | 1,487 / 6 / 0 |
+| 사진 업로드 성공 / 실패 | 70 / 3 |
+| 조회 성공 / 404 / 실패 | 5,597 / 0 / 0 (eks 3,886, gke 1,711) |
+| 쓰기 실패 원인 | 9건 모두 게이트웨이 `503 hold_timeout` (커밋 안 됨) |
+| 가장 긴 예약 공백 | **3분 36.6초** (22:14:41.2부터) |
+| 응답한 예약이 GKE DB에 있음 | 1,487 / 1,487 (누락 0), DB의 `migration-rehearsal` 행도 정확히 1,487 |
+| 응답한 예약이 EKS(이제 replica)에 있음 | 1,487 / 1,487 |
+| 사진 재확인 (GKE 경로) | 70 / 70 같은 바이트(SHA-256), 누락 0 |
+| `hopmigrate verify` (따로 실행) | 테이블 5개 누락 0, 파일 10 일치, `RESULT: OK` |
+| 끝난 뒤 | GKE `moimroom-db-gke` primary, EKS `moimroom-db` replica streaming lag 0, 게이트웨이 쓰기·읽기 gke 100% |
+
+### halt 원인 (일부만 확인)
+
+- 대상 DB는 22:14:55에 승격을 마치고 연결을 받았다(재시작 없음). 엔진만 3분 동안 안정을 확인하지 못했다
+- 엔진의 대상 DSN은 로컬 `kubectl port-forward`를 거쳤다. 승격 직후부터 엔진이 끝날 때까지 port-forward가 93번 끊겼다(파드 안 `127.0.0.1:5432` 연결이 `connection reset by peer`). 엔진이 끝난 22:17:41 뒤로는 끊기지 않고 지금도 정상
+- 같은 증상이 hello 1회차(port-forward 경로)에서도 나왔다. 클러스터 안에서 엔진을 돌린 회차는 모두 성공했다
+- 확인하지 못한 것: 엔진이 연결하는 동안에만 reset이 반복되는 이유
+- 엔진을 PC에서 돌린 이유: 워크로드 EKS 파드에서 관리 EKS 게이트웨이 관리 포트(9901)로 가는 길을 보안 그룹이 막는다(관리 노드는 ALB 보안 그룹에서만 80~9901 허용). 사용자가 보안 그룹 임시 변경 대신 PC 실행을 골랐다
+
+### 쓰기 공백 3분 36초
+
+- 게이트웨이는 엔진의 cutover를 기다리며 보류를 유지했다. 엔진이 halt한 뒤에도 보류는 풀리지 않았고, 운영자가 수동으로 풀 때까지 이어졌다. 보류 중 들어온 쓰기는 55초마다 503으로 끝났다
+- 엔진이 정상 동작했다면 승격 완료(22:14:55) 뒤 안정 확인만큼 기다리고 cutover했을 것이다. hello 게이트웨이 회차의 보류는 17.4초였다
+- halt가 쓰기 보류를 3분 넘게 유지한 것은 설계상 맞다(승격 요청 뒤에는 어느 쪽이 primary인지 사람이 확인해야 한다). 다만 halt 때 운영자에게 알리는 수단이 엔진 로그뿐이었다
+
+### 검증하지 않은 것과 남은 것
+
+- 엔진 run 상태는 `halted`로 남아 있다. cutover·verify·finalize는 엔진이 하지 않았고, cutover는 운영자가 게이트웨이 API로, verify는 따로 실행했다
+- 롤백(GCP → AWS)과 실패 주입은 하지 않았다
+- GitOps: EKS 앱과 DB는 Argo가 계속 관리한다(지금 EKS DB는 replica, EKS 앱은 트래픽 없음). GKE 앱 변경(`DATABASE_URL`, `SEED_SPACES`, replicas 1)은 kubectl patch로 했고 Git에 없다. infra `apps.yaml`의 gke 대상도 아직 `moimroom-gcp-db`
+- 부하는 AWS 리전 파드에서 공개 URL로 보냈다. 실제 사용자 위치와 다르다
+- 남긴 것: 워크로드 EKS `hop-migrate`(러너 파드, env Secret, 프록시 허용 정책), `moimroom/*-gke-*` Secret 2개, GKE `charlie-apps`의 러너 SA·토큰·Role, 복사한 Secret 5개, `moimroom-db-gke-baseline`, `hopcharlie-db-network/db-network-operator-node-local-dns`. 테스트 예약 1,487건과 사진 70장(손님 이름 `migration-rehearsal`)은 운영 DB와 GCS에 남아 있음

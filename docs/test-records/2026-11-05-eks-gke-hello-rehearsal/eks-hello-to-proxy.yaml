@@ -1,0 +1,12 @@
+# Test only: let any pod in namespace hello (the engine runner, probes) reach the
+# egress proxy on 5432. The chart allows only the local CNPG pods.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: hello-rehearsal-to-db-gke, namespace: hopcharlie-db-network}
+spec:
+  podSelector:
+    matchLabels: {tailscale.com/managed: "true", tailscale.com/parent-resource: db-gke, tailscale.com/parent-resource-ns: hopcharlie-db-network, tailscale.com/parent-resource-type: svc}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: hello}}}]
+      ports: [{protocol: TCP, port: 5432}]

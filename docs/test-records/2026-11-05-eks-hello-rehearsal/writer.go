@@ -10,6 +10,8 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -25,10 +27,14 @@ func main() {
 	dur := flag.Duration("for", 0, "stop after this long (0 = until interrupted)")
 	acked := flag.String("acked", "acked.txt", "file of acknowledged ids")
 	check := flag.String("check", "", "DSN to verify acknowledged ids against, then exit")
+	url := flag.String("url", "", "write through the gateway: POST <url>/visits?id=N (instead of -a/-b)")
 	flag.Parse()
 
 	if *check != "" {
 		os.Exit(verify(*check, *acked))
+	}
+	if *url != "" {
+		os.Exit(viaHTTP(*url, *every, *dur, *acked))
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -110,6 +116,75 @@ func main() {
 	}
 	fmt.Printf("RESULT ok=%d failed=%d longest_gap=%s (from %s) ran=%s last=%s\n",
 		ok, failed, longest.Round(time.Millisecond), gapStart.Format("15:04:05.000"), time.Since(start).Round(time.Second), names[cur])
+}
+
+// viaHTTP writes one row per tick through the gateway, one request at a time
+// like a single client. A held write simply takes longer; the longest gap
+// between acknowledged writes is what a user saw.
+func viaHTTP(base string, every, dur time.Duration, path string) int {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	if dur > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, dur)
+		defer cancel()
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	defer f.Close()
+	client := &http.Client{Timeout: 70 * time.Second}
+	id := time.Now().UnixMilli() * 1000
+	var ok, failed int
+	var longest, slowest time.Duration
+	var gapStart time.Time
+	start := time.Now()
+	lastOK, lastLog := start, start
+	codes := map[string]int{}
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for ctx.Err() == nil {
+		id++
+		sent := time.Now()
+		resp, err := client.Post(fmt.Sprintf("%s/visits?id=%d", base, id), "text/plain", nil)
+		took := time.Since(sent)
+		now := time.Now()
+		if err == nil {
+			backend := resp.Header.Get("X-Charlie-Backend")
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			codes[fmt.Sprintf("%d %s", resp.StatusCode, backend)]++
+			if resp.StatusCode == http.StatusCreated {
+				ok++
+				fmt.Fprintln(f, id)
+				if g := now.Sub(lastOK); g > longest {
+					longest, gapStart = g, lastOK
+				}
+				if took > slowest {
+					slowest = took
+				}
+				lastOK = now
+			} else {
+				failed++
+			}
+		} else if ctx.Err() == nil {
+			failed++
+			codes["error"]++
+		}
+		if now.Sub(lastLog) >= 10*time.Second {
+			fmt.Printf("%s ok=%d failed=%d\n", now.Format("15:04:05"), ok, failed)
+			lastLog = now
+		}
+		select {
+		case <-ctx.Done():
+		case <-t.C:
+		}
+	}
+	fmt.Printf("RESULT ok=%d failed=%d longest_gap=%s (from %s) slowest_write=%s ran=%s responses=%v\n",
+		ok, failed, longest.Round(time.Millisecond), gapStart.Format("15:04:05.000"), slowest.Round(time.Millisecond), time.Since(start).Round(time.Second), codes)
+	return 0
 }
 
 func short(err error) string {

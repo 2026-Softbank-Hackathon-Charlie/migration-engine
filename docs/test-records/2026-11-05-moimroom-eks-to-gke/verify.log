@@ -1,0 +1,7 @@
+  ✔ app.reservation_slots                    1488 rows, 0 missing
+  ✔ app.reservations                         1488 rows, 0 missing
+  ✔ app.reviews                              0 rows, 0 missing
+  ✔ app.space_photos                         70 rows, 0 missing
+  ✔ app.spaces                               16 rows, 0 missing
+files: 10 matching, 0 differences, 0 missing
+RESULT: OK — 0 missing rows (2026-11-05T22:21:59+09:00)

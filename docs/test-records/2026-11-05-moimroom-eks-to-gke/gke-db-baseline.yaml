@@ -1,0 +1,13 @@
+# charlie-apps has no NetworkPolicy. The db-network chart adds an Egress policy
+# (-client) and an Ingress policy (-database) that select the new DB's pods,
+# which would cut its DNS, Kubernetes API, CNPG operator and app traffic.
+# Policies add up, so this keeps the new DB's ordinary traffic. Only the new
+# DB's pods are selected; moimroom-gcp-db and other pods are untouched.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: moimroom-db-gke-baseline, namespace: charlie-apps}
+spec:
+  podSelector: {matchLabels: {cnpg.io/cluster: moimroom-db-gke}}
+  policyTypes: [Ingress, Egress]
+  ingress: [{}]
+  egress: [{}]

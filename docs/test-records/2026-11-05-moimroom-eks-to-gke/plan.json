@@ -1,0 +1,14 @@
+{
+  "id": "moimroom-eks-to-gke",
+  "source": {"env": "eks", "namespace": "moimroom", "cluster": "moimroom-db",
+    "kubeconfig": "<infra>/.generated/access/workload.kubeconfig", "context": "charlie-dev-workload",
+    "dsn": "postgres://app:${MOIMROOM_PGPASSWORD}@127.0.0.1:15542/app?sslmode=require"},
+  "target": {"env": "gke", "namespace": "charlie-apps", "cluster": "moimroom-db-gke",
+    "kubeconfig": "<infra>/.generated/access/gke.kubeconfig", "context": "charlie-dev-gcp-workload",
+    "dsn": "postgres://app:${MOIMROOM_PGPASSWORD}@127.0.0.1:15543/app?sslmode=require"},
+  "files": {"source": "src:hopcharlie-eks-moimroom", "target": "dst:charlie-414068132732-moimroom-gcp",
+    "rclone": "rclone.exe"},
+  "gateway": {"mode": "http", "url": "http://127.0.0.1:19905/apps/moimroom", "token": "${GATEWAY_TOKEN}"},
+  "verify": {"schemas": ["app"], "fenceGate": true},
+  "thresholds": {"maxLagBytes": 1048576, "catchupTimeout": "10m", "switchoverTimeout": "3m", "maxDowntime": "3m"}
+}

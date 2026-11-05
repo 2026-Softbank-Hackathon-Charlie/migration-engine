@@ -1,0 +1,163 @@
+{
+  "runId": "moimroom-eks-to-gke-20261105-131437",
+  "planId": "moimroom-eks-to-gke",
+  "createdAt": "2026-11-05T13:14:37.2026646Z",
+  "updatedAt": "2026-11-05T13:17:41.8286348Z",
+  "outcome": "halted",
+  "steps": {
+    "cutover": {
+      "status": "pending"
+    },
+    "delta": {
+      "status": "succeeded",
+      "startedAt": "2026-11-05T13:14:40.1303274Z",
+      "endedAt": "2026-11-05T13:14:41.0565853Z",
+      "evidence": {
+        "filesSync": {
+          "duration": 844042400,
+          "output": "2026/11/05 22:14:40 NOTICE: Config file \"<home>/rclone.conf\" not found - using defaults"
+        },
+        "lagBytes": 0
+      }
+    },
+    "fence": {
+      "status": "succeeded",
+      "startedAt": "2026-11-05T13:14:41.0578812Z",
+      "endedAt": "2026-11-05T13:14:41.8184772Z",
+      "evidence": {
+        "fenceLsn": "0/C06F080",
+        "filesSync": {
+          "duration": 703805500,
+          "output": "2026/11/05 22:14:41 NOTICE: Config file \"<home>/rclone.conf\" not found - using defaults"
+        },
+        "writesHeldAt": "2026-11-05T13:14:41.0994082Z"
+      }
+    },
+    "finalize": {
+      "status": "pending"
+    },
+    "precheck": {
+      "status": "succeeded",
+      "startedAt": "2026-11-05T13:14:37.2049094Z",
+      "endedAt": "2026-11-05T13:14:38.6138223Z",
+      "evidence": {
+        "source": {
+          "phase": "Cluster in healthy state",
+          "currentPrimary": "moimroom-db-1",
+          "instances": 1,
+          "readyInstances": 1,
+          "hasDemotionToken": false,
+          "self": "moimroom-db",
+          "replicaPrimary": "moimroom-db",
+          "replicaSource": "moimroom-db-gke"
+        },
+        "target": {
+          "phase": "Cluster in healthy state",
+          "currentPrimary": "moimroom-db-gke-1",
+          "instances": 1,
+          "readyInstances": 1,
+          "hasDemotionToken": false,
+          "self": "moimroom-db-gke",
+          "replicaPrimary": "moimroom-db",
+          "replicaSource": "moimroom-db"
+        }
+      }
+    },
+    "prepare": {
+      "status": "succeeded",
+      "startedAt": "2026-11-05T13:14:38.6159896Z",
+      "endedAt": "2026-11-05T13:14:38.8991247Z",
+      "evidence": {
+        "target": {
+          "phase": "Cluster in healthy state",
+          "currentPrimary": "moimroom-db-gke-1",
+          "instances": 1,
+          "readyInstances": 1,
+          "hasDemotionToken": false,
+          "self": "moimroom-db-gke",
+          "replicaPrimary": "moimroom-db",
+          "replicaSource": "moimroom-db"
+        }
+      }
+    },
+    "presync": {
+      "status": "succeeded",
+      "startedAt": "2026-11-05T13:14:38.901486Z",
+      "endedAt": "2026-11-05T13:14:40.1286028Z",
+      "evidence": {
+        "filesSync": {
+          "duration": 1141939400,
+          "output": "2026/11/05 22:14:39 NOTICE: Config file \"<home>/rclone.conf\" not found - using defaults"
+        },
+        "lagBytes": 0
+      }
+    },
+    "switchover": {
+      "status": "failed",
+      "startedAt": "2026-11-05T13:14:41.8198612Z",
+      "endedAt": "2026-11-05T13:17:41.8269266Z",
+      "error": "target did not settle after promotion: context deadline exceeded",
+      "evidence": {
+        "demotionToken": true,
+        "fenceGate": {
+          "durationMillis": 213,
+          "ok": true,
+          "tables": [
+            {
+              "table": "app.reservation_slots",
+              "sourceCount": 501,
+              "targetCount": 501,
+              "sourceHash": "31ce1873b818cfa559032a45a795d05c",
+              "targetHash": "31ce1873b818cfa559032a45a795d05c",
+              "match": true
+            },
+            {
+              "table": "app.reservations",
+              "sourceCount": 501,
+              "targetCount": 501,
+              "sourceHash": "a3a964dc099abce93b2192def40bb10d",
+              "targetHash": "a3a964dc099abce93b2192def40bb10d",
+              "match": true
+            },
+            {
+              "table": "app.reviews",
+              "sourceCount": 0,
+              "targetCount": 0,
+              "match": true
+            },
+            {
+              "table": "app.space_photos",
+              "sourceCount": 10,
+              "targetCount": 10,
+              "sourceHash": "32303309a4834359102fc29f5ead86c4",
+              "targetHash": "32303309a4834359102fc29f5ead86c4",
+              "match": true
+            },
+            {
+              "table": "app.spaces",
+              "sourceCount": 16,
+              "targetCount": 16,
+              "sourceHash": "a6ea658dc62a5ef5ae2151af6dff398d",
+              "targetHash": "a6ea658dc62a5ef5ae2151af6dff398d",
+              "match": true
+            }
+          ]
+        },
+        "fenceLsn": "0/C06F080",
+        "targetLsnAfterPromotion": "0/D0002B0",
+        "targetReplayLsn": "0/C06F080"
+      }
+    },
+    "verify": {
+      "status": "pending"
+    }
+  },
+  "writesHeld": true,
+  "writesHeldAt": "2026-11-05T13:14:41.0994082Z",
+  "fenceLsn": "0/C06F080",
+  "sourceDemoted": true,
+  "promoteRequested": true,
+  "trafficOnTarget": false,
+  "failureStep": "switchover",
+  "failureError": "target did not settle after promotion: context deadline exceeded"
+}

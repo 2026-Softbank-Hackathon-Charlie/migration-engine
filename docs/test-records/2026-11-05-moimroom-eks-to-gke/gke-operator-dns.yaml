@@ -1,0 +1,12 @@
+# GKE runs NodeLocal DNSCache: pod DNS to 10.82.0.10 is answered by the
+# hostNetwork node-local-dns pod, which a kube-dns podSelector does not match.
+# The chart's db-network-operator policy therefore blocks the operator's DNS
+# (proxies pass only because they allow UDP anywhere). Operator only, port 53.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: db-network-operator-node-local-dns, namespace: hopcharlie-db-network}
+spec:
+  podSelector: {matchLabels: {app: operator}}
+  policyTypes: [Egress]
+  egress:
+    - ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]

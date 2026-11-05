@@ -1,0 +1,23 @@
+start 22:14:37
+run moimroom-eks-to-gke-20261105-131437 (state: runs\moimroom-eks-to-gke-20261105-131437.json)
+22:14:37.206 ▶ precheck
+22:14:38.615 ✔ precheck (1408 ms)
+22:14:38.617 ▶ prepare
+22:14:38.900 ✔ prepare (283 ms)
+22:14:38.902 ▶ presync
+22:14:38.986   presync replication lag lagBytes=0 sourceLsn=0/C068828 targetLsn=0/C068828
+22:14:40.130 ✔ presync (1227 ms)
+22:14:40.131 ▶ delta
+22:14:41.055   delta replication lag lagBytes=0 sourceLsn=0/C06ED48 targetLsn=0/C06ED48
+22:14:41.057 ✔ delta (926 ms)
+22:14:41.059 ▶ fence
+22:14:41.100   fence writes held at gateway 
+22:14:41.819 ✔ fence (760 ms)
+22:14:41.825 ▶ switchover
+22:14:42.094   switchover fence gate passed tables=5
+22:14:42.222   switchover source demotion requested newPrimary=moimroom-db-gke
+22:14:43.389   switchover target promotion requested oldPrimary=moimroom-db
+22:17:41.828 ✘ switchover: target did not settle after promotion: context deadline exceeded
+22:17:41.829 ! switchover [halt] target promotion was requested; not rolling back automatically (split-brain guard). Operator action required. trafficOnTarget=false writesHeld=true
+error: halted at switchover: target did not settle after promotion: context deadline exceeded
+exit=1 end 22:17:41

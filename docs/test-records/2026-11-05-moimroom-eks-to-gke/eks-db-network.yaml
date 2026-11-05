@@ -1,0 +1,8 @@
+enabled: true
+clusterId: eks
+localDatabase: {namespace: moimroom, cluster: moimroom-db}
+ingress: {hostname: hop-db-eks-moimroom, tag: "tag:hop-db-eks"}
+egress:
+  tag: "tag:hop-db-client-eks"
+  peers:
+    gke: {hostname: hop-db-eks-to-gke-moimroom, tailnetFQDN: hop-db-gke-moimroom.tail567fe8.ts.net}

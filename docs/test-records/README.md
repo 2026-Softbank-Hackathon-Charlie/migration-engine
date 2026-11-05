@@ -16,6 +16,7 @@
 | 2026-11-04 | platform 동등성 기록 모드 (RBAC·Prometheus, 실 k3s·Prometheus) | 통과 | [아래](#2026-11-04-platform-동등성-기록-모드) |
 | 2026-11-04 | moimroom e2e (부하 중 DB·사진 이전 + 원본 정리, kind 새로 생성) | 통과, 쓰기 대기 15.7초, 실패 요청 0, 전체 7분 10초 | [아래](#2026-11-04-moimroom-e2e-시간-측정) |
 | 2026-11-05 | 실제 EKS 이전 리허설 (hello DB, 엔진·부하 클러스터 안에서, 왕복) | 엔진 3/4 성공 (1회차 halt, 원인 port-forward), 응답한 쓰기 누락 0 | [아래](#2026-11-05-실제-eks-이전-리허설) |
+| 2026-11-05 | 실제 AWS → GCP 이전 리허설 (EKS ↔ GKE, Tailscale operator 경로, 부하 중) | EKS→GKE 성공 (다운타임 11.9초, 응답한 쓰기 누락 0), GKE→EKS는 fence gate 불일치로 rolled_back (유실 0) | [아래](#2026-11-05-실제-aws--gcp-이전-리허설) |
 
 ---
 
@@ -306,3 +307,56 @@ kind 클러스터 `hopgw`는 남겨 둠
 ### 남긴 것
 
 - 워크로드 EKS 네임스페이스 `hello`(CNPG 두 개, 실행 파드 `hello-runner`, Role, gp3 1Gi 두 개)는 다음 단계(EKS → GKE)에 다시 쓰려고 남겨 둠. `kubectl delete ns hello`로 정리
+
+## 2026-11-05 실제 AWS → GCP 이전 리허설
+
+- 대상: migration-engine main `399f278`, 부하 프로그램은 위 EKS 리허설과 같음(시작 id를 시각 기반으로 고친 판)
+- 원본: 워크로드 EKS `hello/hello-src` (PG 18.6, CNPG 1.30.1). 위 EKS 리허설 4회차 뒤의 primary
+- 대상: GKE `charlie-dev-gcp-workload`의 `hello/hello-gke` (같은 이미지 digest, CNPG 1.30.1, standard-rwo 1Gi). 미리 standby로 만들어 둠(`target.manifest` 생략). 기존 GCP의 `moimroom-gcp-db` 등은 건드리지 않음
+- DB 경로: infra [ADR 0048](https://github.com/2026-Softbank-Hackathon-Charlie/infra/blob/main/docs/adr/0048-connect-cloud-databases-with-scoped-migration-access.md) 방식. 양쪽 클러스터에 Tailscale operator 1.104.4와 `hopcharlie-db-network` 차트(hello 값)를 설치. 각 DB는 `db-eks.hopcharlie-db-network.svc.cluster.local`, `db-gke.hopcharlie-db-network.svc.cluster.local` 로컬 Service로 상대에 닿음. 기존 앱 라우터(ADR 0037)는 바꾸지 않음
+- 복제 TLS: `verify-full` 유지. 양쪽 CNPG `spec.certificates.serverAltDNSNames`에 상대가 쓰는 프록시 이름을 넣음
+- 실행: 엔진과 부하는 EKS `hello` 네임스페이스의 실행 파드. GKE는 `hello` 네임스페이스에만 권한이 있는 ServiceAccount 토큰 kubeconfig로 접근(GKE API는 AWS NAT IP만 허용하며 EKS 파드가 그 IP로 나감)
+- `gateway.mode: none`, 부하는 0.1초마다 한 행(a = EKS, b = GKE 프록시)
+- 입력과 원시 로그: [2026-11-05-eks-gke-hello-rehearsal/](2026-11-05-eks-gke-hello-rehearsal/) (토큰이 든 kubeconfig는 넣지 않음)
+
+### 준비 중 확인한 것
+
+| 항목 | 결과 |
+|---|---|
+| GKE 파드 → `db-eks` → EKS hello-src:5432 | 접속됨, 서버 인증서 `CN=hello-src-rw` |
+| hello-gke 생성(pg_basebackup over tailnet) | 16:58:06 생성 → 16:59:14 healthy (약 1분, 데이터 작음) |
+| hello-gke 복제 | `pg_is_in_recovery = t`, `streaming`, sender `db-eks...` |
+| EKS 실행 파드 → `db-gke` → GKE hello-gke:5432 | 접속됨, app 계정 로그인 성공 |
+| 엔진 `status` | 양쪽 클러스터 healthy, 복제 지연 0 바이트 |
+
+### 결과
+
+| # | 방향 | 엔진 결과 | 엔진 다운타임 | 부하 |
+|---|---|---|---|---|
+| X1 | EKS → GKE | **succeeded** | 11,857 ms | 응답한 쓰기 2,329건, GKE·EKS 양쪽 누락 0. 실패 13건, 최장 공백 7.4초 |
+| X2 | GKE → EKS (원복 방향) | **rolled_back** (fence gate: `public.visits` 불일치) | – | 응답한 쓰기 2,396건, 양쪽 누락 0. 실패 0, 최장 공백 0.5초 |
+
+- X1 흐름: 08:01:12.1 원본(EKS) 강등 요청 → 08:01:13.3 대상(GKE) 승격 요청 → 08:01:19.9 부하가 GKE에 쓰기 시작 → 08:01:24.8 완료. 끝난 뒤 EKS `hello-src`는 `db-gke`로 GKE를 streaming으로 따라감. `hopmigrate verify` 누락 0
+- X2: delta까지 복제 지연 0 바이트였지만, `gateway.mode: none`이라 fence에서 쓰기를 실제로 붙잡지 않는다. fence gate가 양쪽을 비교하던 약 0.5초 동안 부하가 원본(GKE)에 계속 썼고, 클라우드 사이 복제가 따라오기 전에 비교해 불일치가 났다. 엔진은 강등 요청 전에 롤백했고 GKE가 primary로 계속 서비스했다. 설계대로의 안전한 중단이다
+- 해석: X1이 같은 경쟁에서 통과한 것은 타이밍이다. 게이트웨이 쓰기 보류 없이는 fence gate 통과가 보장되지 않는다. 실제 흐름(게이트웨이 http)에서 다시 확인해야 한다
+
+### 준비하며 바꾼 것과 발견한 것
+
+- tailnet 정책에 ADR 0048 조각(태그, TCP 5432 grant 3개, accept 테스트 3개)을 병합했다. 기존 `* → *` grant가 있어 deny 테스트는 저장이 거부되므로 넣지 않았다. 그래서 DB 경로는 아직 격리되지 않는다
+- OAuth client 2개(`eks`, `gke`)를 API로 만들고 client secret은 각 클러스터 `operator-oauth` Secret으로만 넘겼다. operator 설치(helm)는 Claude Code 권한 분류기가 거부해 사용자가 직접 실행했다
+- `hopcharlie-db-network` 차트는 DB 네임스페이스에 primary 파드의 Ingress/Egress를 프록시 5432로만 여는 정책을 만든다. 기존 DNS·API·CNPG 허용 정책이 있다는 전제다. `hello`에는 정책이 없어서 그대로면 DB가 끊기므로 시험용 전부 허용 정책(`hello-allow-all.yaml`)을 먼저 넣었다
+- 차트의 egress 프록시는 로컬 CNPG 파드에서 오는 5432만 받는다. 엔진 실행 파드가 상대 DB에 닿도록 시험용 정책(`*-hello-to-proxy.yaml`)을 더했다. 플랫폼 경로에서는 management 프로필이 API 파드를 허용한다
+- 원본 CA Secret에는 개인키(`ca.key`)가 들어 있다. 대상은 `ca.crt`만 필요하므로 복사본에서 개인키를 지웠다
+- `helm template`은 `--kube-version` 없이 실행하면 차트의 `kubeVersion: >=1.35.0-0 <1.37.0-0` 제약에 걸린다(로컬 helm 기본값 1.37)
+
+### 검증하지 않은 것
+
+- 게이트웨이 쓰기 보류(http)와 카나리, 플랫폼 API 경로(management 프로필, 임시 RoleBinding helper), 파일 이전, HTTP 앱 트래픽
+- DERP와 직접 연결 중 어느 쪽으로 붙었는지, 큰 DB의 base backup 처리량
+
+### 남긴 것
+
+- EKS `hello`: hello-src(지금 복제본, GKE를 따라감), 실행 파드, Role, 시험용 NetworkPolicy, 복사한 hello-gke CA·복제 Secret
+- GKE `hello`: hello-gke(지금 primary), 실행용 ServiceAccount와 토큰, Role, 시험용 NetworkPolicy, 복사한 hello-src CA(인증서만)·복제·앱 Secret
+- 양쪽 `hopcharlie-db-network`: operator, db-network 릴리스, 시험용 NetworkPolicy, `operator-oauth`
+- tailnet: 정책 병합분, OAuth client 2개, 장치 6개(operator 2, 프록시 4)

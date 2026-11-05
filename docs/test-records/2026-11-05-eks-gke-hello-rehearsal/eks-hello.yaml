@@ -1,0 +1,8 @@
+enabled: true
+clusterId: eks
+localDatabase: {namespace: hello, cluster: hello-src}
+ingress: {hostname: hop-db-eks-hello, tag: "tag:hop-db-eks"}
+egress:
+  tag: "tag:hop-db-client-eks"
+  peers:
+    gke: {hostname: hop-db-eks-to-gke-hello, tailnetFQDN: hop-db-gke-hello.tail567fe8.ts.net}

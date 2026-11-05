@@ -1,0 +1,11 @@
+# Test namespace only: the db-network chart restricts the DB primary's traffic and
+# assumes existing DNS/API/CNPG guardrails, which namespace hello does not have.
+# NetworkPolicies add up, so this keeps hello's ordinary traffic working.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: hello-allow-all, namespace: hello}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress: [{}]
+  egress: [{}]

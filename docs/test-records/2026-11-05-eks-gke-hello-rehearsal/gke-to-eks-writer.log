@@ -1,0 +1,25 @@
+08:05:19.472 writes moved a -> b (ERROR: cannot execute INSERT in a read-only transaction (SQLSTATE 25006))
+08:05:29 ok=97 failed=0 writing to b
+08:05:39 ok=197 failed=0 writing to b
+08:05:49 ok=297 failed=0 writing to b
+08:05:59 ok=398 failed=0 writing to b
+08:06:09 ok=498 failed=0 writing to b
+08:06:19 ok=598 failed=0 writing to b
+08:06:29 ok=699 failed=0 writing to b
+08:06:39 ok=799 failed=0 writing to b
+08:06:49 ok=900 failed=0 writing to b
+08:06:59 ok=1000 failed=0 writing to b
+08:07:09 ok=1101 failed=0 writing to b
+08:07:19 ok=1201 failed=0 writing to b
+08:07:29 ok=1302 failed=0 writing to b
+08:07:39 ok=1403 failed=0 writing to b
+08:07:49 ok=1504 failed=0 writing to b
+08:07:59 ok=1604 failed=0 writing to b
+08:08:09 ok=1705 failed=0 writing to b
+08:08:19 ok=1806 failed=0 writing to b
+08:08:29 ok=1906 failed=0 writing to b
+08:08:40 ok=2007 failed=0 writing to b
+08:08:50 ok=2108 failed=0 writing to b
+08:09:00 ok=2209 failed=0 writing to b
+08:09:10 ok=2310 failed=0 writing to b
+RESULT ok=2396 failed=0 longest_gap=528ms (from 08:05:18.945) ran=4m0s last=b

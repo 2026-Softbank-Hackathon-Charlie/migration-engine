@@ -1,0 +1,26 @@
+# The EKS rehearsal runner's access to GKE: namespace hello only.
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: hello-runner, namespace: hello }
+---
+apiVersion: v1
+kind: Secret
+type: kubernetes.io/service-account-token
+metadata: { name: hello-runner-token, namespace: hello, annotations: { kubernetes.io/service-account.name: hello-runner } }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: hello-runner, namespace: hello }
+rules:
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [clusters]
+    verbs: [get, list, watch, patch, update]
+  - apiGroups: [""]
+    resources: [pods, services, events]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: hello-runner, namespace: hello }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: hello-runner }
+subjects: [{ kind: ServiceAccount, name: hello-runner, namespace: hello }]

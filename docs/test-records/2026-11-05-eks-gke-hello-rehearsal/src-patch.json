@@ -1,0 +1,9 @@
+{"spec":{
+ "certificates":{"serverAltDNSNames":["db-eks.hopcharlie-db-network.svc.cluster.local"]},
+ "replica":{"self":"hello-src","primary":"hello-src","source":"hello-gke"},
+ "externalClusters":[
+  {"name":"hello-src","connectionParameters":{"host":"hello-src-rw.hello.svc","user":"streaming_replica","dbname":"postgres","sslmode":"verify-full"},
+   "sslKey":{"name":"hello-src-replication","key":"tls.key"},"sslCert":{"name":"hello-src-replication","key":"tls.crt"},"sslRootCert":{"name":"hello-src-ca","key":"ca.crt"}},
+  {"name":"hello-gke","connectionParameters":{"host":"db-gke.hopcharlie-db-network.svc.cluster.local","user":"streaming_replica","dbname":"postgres","sslmode":"verify-full"},
+   "sslKey":{"name":"hello-gke-replication","key":"tls.key"},"sslCert":{"name":"hello-gke-replication","key":"tls.crt"},"sslRootCert":{"name":"hello-gke-ca","key":"ca.crt"}}
+ ]}}

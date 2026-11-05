@@ -1,0 +1,33 @@
+{
+  "id": "hello-eks-to-gke-gw",
+  "source": {
+    "env": "eks",
+    "namespace": "hello",
+    "cluster": "hello-src",
+    "dsn": "postgres://app:${HELLO_PGPASSWORD}@hello-src-rw.hello.svc:5432/app?sslmode=require"
+  },
+  "target": {
+    "env": "gke",
+    "kubeconfig": "/work/gke-runner.kubeconfig",
+    "context": "gke",
+    "namespace": "hello",
+    "cluster": "hello-gke",
+    "dsn": "postgres://app:${HELLO_PGPASSWORD}@db-gke.hopcharlie-db-network.svc.cluster.local:5432/app?sslmode=require"
+  },
+  "gateway": {
+    "mode": "http",
+    "url": "http://127.0.0.1:9901"
+  },
+  "verify": {
+    "schemas": [
+      "public"
+    ],
+    "fenceGate": true
+  },
+  "thresholds": {
+    "maxLagBytes": 1048576,
+    "catchupTimeout": "10m",
+    "switchoverTimeout": "3m",
+    "maxDowntime": "3m"
+  }
+}

@@ -1,0 +1,30 @@
+engine start 08:21:33
+run hello-eks-to-gke-gw-20261105-082133 (state: .hopcharlie/runs/hello-eks-to-gke-gw-20261105-082133.json)
+08:21:33.217 ▶ precheck
+08:21:33.266 ✔ precheck (48 ms)
+08:21:33.266 ▶ prepare
+08:21:33.887 ✔ prepare (621 ms)
+08:21:33.887 ▶ presync
+08:21:34.015   presync replication lag lagBytes=0 sourceLsn=0/15075C18 targetLsn=0/15075CD8
+08:21:34.015 ✔ presync (128 ms)
+08:21:34.016 ▶ delta
+08:21:34.080   delta replication lag lagBytes=192 sourceLsn=0/15075D98 targetLsn=0/15075CD8
+08:21:34.080 ✔ delta (64 ms)
+08:21:34.080 ▶ fence
+08:21:34.082   fence writes held at gateway
+08:21:34.082 ✔ fence (2 ms)
+08:21:34.082 ▶ switchover
+08:21:34.636   switchover fence gate passed tables=2
+08:21:34.691   switchover source demotion requested newPrimary=hello-gke
+08:21:35.764   switchover target promotion requested oldPrimary=hello-src
+08:21:51.461 ✔ switchover (17378 ms)
+08:21:51.462 ▶ cutover
+08:21:51.466   cutover write downtime downtimeMillis=17383
+08:21:51.466 ✔ cutover (4 ms)
+08:21:51.466 ▶ verify
+08:21:52.958 ✔ verify (1491 ms)
+08:21:52.958 ▶ finalize
+08:21:52.981 ✔ finalize (23 ms)
+08:21:52.981 ★ migration succeeded downtimeMillis=17383
+engine exit=0 08:21:52
+DONE

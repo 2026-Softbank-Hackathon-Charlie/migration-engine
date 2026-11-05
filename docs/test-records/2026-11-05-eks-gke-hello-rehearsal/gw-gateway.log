@@ -1,0 +1,7 @@
+{"time":"2026-11-05T08:16:09.034018495Z","level":"INFO","msg":"gateway listening","listen":"127.0.0.1:8000","adminAddr":"127.0.0.1:9901","auth":false,"backends":["eks=http://127.0.0.1:8081","gke=http://127.0.0.1:8082"],"stateFile":"/work/gateway-state.json","appDomain":"","defaultApp":"app"}
+{"time":"2026-11-05T08:17:17.912853228Z","level":"INFO","msg":"admin action","action":"hold","changed":true,"hold":1,"result":"ok","inFlightAtHold":1,"drainMillis":11}
+{"time":"2026-11-05T08:17:35.309686954Z","level":"INFO","msg":"admin action","action":"route","backend":"eks","previous":"gke","writesHeld":true}
+{"time":"2026-11-05T08:17:35.31175881Z","level":"INFO","msg":"admin action","action":"release","changed":true,"backend":"eks","released":1,"heldMillis":17408,"dispatchMillis":1}
+{"time":"2026-11-05T08:21:34.082119367Z","level":"INFO","msg":"admin action","action":"hold","changed":true,"hold":2,"result":"ok","inFlightAtHold":0,"drainMillis":1}
+{"time":"2026-11-05T08:21:51.463903339Z","level":"INFO","msg":"admin action","action":"route","backend":"gke","previous":"eks","writesHeld":true}
+{"time":"2026-11-05T08:21:51.465909962Z","level":"INFO","msg":"admin action","action":"release","changed":true,"backend":"gke","released":1,"heldMillis":17383,"dispatchMillis":1}

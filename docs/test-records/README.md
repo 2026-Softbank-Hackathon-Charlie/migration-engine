@@ -16,7 +16,7 @@
 | 2026-11-04 | platform 동등성 기록 모드 (RBAC·Prometheus, 실 k3s·Prometheus) | 통과 | [아래](#2026-11-04-platform-동등성-기록-모드) |
 | 2026-11-04 | moimroom e2e (부하 중 DB·사진 이전 + 원본 정리, kind 새로 생성) | 통과, 쓰기 대기 15.7초, 실패 요청 0, 전체 7분 10초 | [아래](#2026-11-04-moimroom-e2e-시간-측정) |
 | 2026-11-05 | 실제 EKS 이전 리허설 (hello DB, 엔진·부하 클러스터 안에서, 왕복) | 엔진 3/4 성공 (1회차 halt, 원인 port-forward), 응답한 쓰기 누락 0 | [아래](#2026-11-05-실제-eks-이전-리허설) |
-| 2026-11-05 | 실제 AWS → GCP 이전 리허설 (EKS ↔ GKE, Tailscale operator 경로, 부하 중) | EKS→GKE 성공 (다운타임 11.9초, 응답한 쓰기 누락 0), GKE→EKS는 fence gate 불일치로 rolled_back (유실 0) | [아래](#2026-11-05-실제-aws--gcp-이전-리허설) |
+| 2026-11-05 | 실제 AWS ↔ GCP 이전 리허설 (EKS ↔ GKE, Tailscale operator 경로, 부하 중) | gateway 없이: EKS→GKE 성공, GKE→EKS rolled_back. **gateway(http)로 왕복 2/2 성공, 실패 요청 0, 쓰기 대기 17.4초, 응답한 쓰기 누락 0** | [아래](#2026-11-05-실제-aws--gcp-이전-리허설) |
 
 ---
 
@@ -308,7 +308,7 @@ kind 클러스터 `hopgw`는 남겨 둠
 
 - 워크로드 EKS 네임스페이스 `hello`(CNPG 두 개, 실행 파드 `hello-runner`, Role, gp3 1Gi 두 개)는 다음 단계(EKS → GKE)에 다시 쓰려고 남겨 둠. `kubectl delete ns hello`로 정리
 
-## 2026-11-05 실제 AWS → GCP 이전 리허설
+## 2026-11-05 실제 AWS ↔ GCP 이전 리허설
 
 - 대상: migration-engine main `399f278`, 부하 프로그램은 위 EKS 리허설과 같음(시작 id를 시각 기반으로 고친 판)
 - 원본: 워크로드 EKS `hello/hello-src` (PG 18.6, CNPG 1.30.1). 위 EKS 리허설 4회차 뒤의 primary
@@ -340,6 +340,24 @@ kind 클러스터 `hopgw`는 남겨 둠
 - X2: delta까지 복제 지연 0 바이트였지만, `gateway.mode: none`이라 fence에서 쓰기를 실제로 붙잡지 않는다. fence gate가 양쪽을 비교하던 약 0.5초 동안 부하가 원본(GKE)에 계속 썼고, 클라우드 사이 복제가 따라오기 전에 비교해 불일치가 났다. 엔진은 강등 요청 전에 롤백했고 GKE가 primary로 계속 서비스했다. 설계대로의 안전한 중단이다
 - 해석: X1이 같은 경쟁에서 통과한 것은 타이밍이다. 게이트웨이 쓰기 보류 없이는 fence gate 통과가 보장되지 않는다. 실제 흐름(게이트웨이 http)에서 다시 확인해야 한다
 
+### 게이트웨이 경유 왕복 (같은 날, X2 뒤)
+
+X2에서 본 경쟁을 없애려고 쓰기를 HTTP로 플랫폼 게이트웨이(platform main `7568769`, `cmd/gateway`)를 거치게 하고 `gateway.mode: http`로 다시 돌렸다.
+
+- 실행 파드 안에 hello 앱 두 개([hello-app.go](2026-11-05-eks-gke-hello-rehearsal/hello-app.go))와 게이트웨이를 띄움([services.sh](2026-11-05-eks-gke-hello-rehearsal/services.sh)). `app-eks`는 EKS hello-src에, `app-gke`는 `db-gke` 프록시로 GKE hello-gke에 쓴다. **두 앱 프로세스 모두 EKS 파드 안에 있다.** 클라우드가 다른 것은 DB뿐이고, 앱 트래픽이 클라우드를 넘는 경로는 시험하지 않았다
+- 부하: 클라이언트 하나가 0.1초마다 `POST /visits?id=N`을 게이트웨이로 보냄(앞 요청이 끝나야 다음 요청). 게이트웨이 기본값(max-hold 55초), 관리 API 인증 끔(파드 loopback)
+
+| # | 방향 | 엔진 결과 | 엔진 다운타임 | 게이트웨이 hold | 부하 |
+|---|---|---|---|---|---|
+| G1 | GKE → EKS | **succeeded** | 17,398 ms | 17,408 ms, 붙잡은 쓰기 1건 | **실패 0**, 응답한 쓰기 2,229건(GKE 211 → EKS 2,018) 양쪽 누락 0, 가장 느린 쓰기 17.4초 |
+| G2 | EKS → GKE | **succeeded** | 17,383 ms | 17,383 ms, 붙잡은 쓰기 1건 | **실패 0**, 응답한 쓰기 2,223건(EKS 209 → GKE 2,014) 양쪽 누락 0, 가장 느린 쓰기 17.9초 |
+
+- 두 회차 모두 fence gate가 통과했다. 쓰기를 붙잡은 뒤 비교하므로 X2와 같은 불일치가 없다
+- 흐름(G1): 08:17:17.9 hold → 08:17:18.5 fence gate 통과 → 08:17:18.6 GKE 강등 요청 → 08:17:20.6 EKS 승격 요청 → 08:17:35.3 EKS 안정 확인, release(`backend: eks`). 붙잡힌 쓰기는 EKS로 보내져 201
+- 다운타임 17초의 대부분은 승격 뒤 새 primary가 CNPG 재시작을 마치고 엔진이 두 번 연속 정상을 확인할 때까지다(승격 요청 → 완료 약 15초). 같은 클러스터 안(8~14초)보다 길다. 클라우드 사이 경로 때문인지는 나누어 재지 않았다
+- `hopmigrate verify` 누락 0. `visits` 14,586행
+- 원시 로그: `gw-*-engine.log`, `gw-*-writer.log`, `gw-gateway.log`
+
 ### 준비하며 바꾼 것과 발견한 것
 
 - tailnet 정책에 ADR 0048 조각(태그, TCP 5432 grant 3개, accept 테스트 3개)을 병합했다. 기존 `* → *` grant가 있어 deny 테스트는 저장이 거부되므로 넣지 않았다. 그래서 DB 경로는 아직 격리되지 않는다
@@ -351,7 +369,7 @@ kind 클러스터 `hopgw`는 남겨 둠
 
 ### 검증하지 않은 것
 
-- 게이트웨이 쓰기 보류(http)와 카나리, 플랫폼 API 경로(management 프로필, 임시 RoleBinding helper), 파일 이전, HTTP 앱 트래픽
+- 카나리(읽기 비율), 클라우드를 넘는 앱 HTTP 트래픽(앱은 모두 EKS 파드 안), 플랫폼 API 경로(management 프로필, 임시 RoleBinding helper), 파일 이전, 여러 클라이언트가 동시에 쓰는 부하
 - DERP와 직접 연결 중 어느 쪽으로 붙었는지, 큰 DB의 base backup 처리량
 
 ### 남긴 것

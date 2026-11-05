@@ -186,6 +186,36 @@ func (i *Inventory) Restore(ctx context.Context, r Resource) error {
 	return fmt.Errorf("cannot restore %s", r)
 }
 
+// Scale sets a Deployment's or StatefulSet's replicas and drops the annotation
+// Stop left, so a later Stop records this count, not a stale one.
+func (i *Inventory) Scale(ctx context.Context, r Resource, n int64) error {
+	if r.Kind != "Deployment" && r.Kind != "StatefulSet" {
+		return fmt.Errorf("cannot scale %s", r)
+	}
+	return i.patch(ctx, r, map[string]any{
+		"metadata": map[string]any{"annotations": map[string]any{AnnReplicas: nil}},
+		"spec":     map[string]any{"replicas": n},
+	})
+}
+
+// Ready is status.readyReplicas of a Deployment or StatefulSet whose status
+// already describes its current spec (observedGeneration caught up).
+func (i *Inventory) Ready(ctx context.Context, r Resource) (int64, error) {
+	if r.Kind != "Deployment" && r.Kind != "StatefulSet" {
+		return 0, fmt.Errorf("%s has no ready count", r)
+	}
+	obj, err := i.get(ctx, r)
+	if err != nil {
+		return 0, err
+	}
+	observed, _, _ := unstructured.NestedInt64(obj.Object, "status", "observedGeneration")
+	if observed < obj.GetGeneration() {
+		return 0, nil
+	}
+	ready, _, _ := unstructured.NestedInt64(obj.Object, "status", "readyReplicas")
+	return ready, nil
+}
+
 // Running is the number of pods of a Deployment or StatefulSet that still
 // exist, terminating ones included, or the active jobs of a CronJob. A pod
 // that got its stop signal keeps running (and holding connections) until its

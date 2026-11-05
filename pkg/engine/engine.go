@@ -1,10 +1,13 @@
 // Package engine executes a migration Plan as a fixed sequence of steps:
 //
-//	precheck → prepare → presync → delta → fence → switchover → cutover → verify → finalize
+//	precheck → prepare → presync → delta → fence → switchover → start-target → cutover → verify → finalize
 //
 // Safety rule (split-brain prevention): a failure is rolled back automatically
 // only while the target has not been asked to promote. Once promotion was
-// requested the engine halts and leaves the decision to an operator.
+// requested the engine halts and leaves the decision to an operator. The one
+// exception (ADR 0012) is a cold plan whose target app fails to start: the
+// gateway still holds every user write and routes to the source, so the
+// promoted target has taken no user write and is demoted again.
 package engine
 
 import (
@@ -12,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -33,13 +37,16 @@ const (
 	StepDelta      = "delta"
 	StepFence      = "fence"
 	StepSwitchover = "switchover"
-	StepCutover    = "cutover"
-	StepVerify     = "verify"
-	StepFinalize   = "finalize"
+	// StepStartTarget starts the target app after promotion (cold plans only;
+	// skipped for warm plans).
+	StepStartTarget = "start-target"
+	StepCutover     = "cutover"
+	StepVerify      = "verify"
+	StepFinalize    = "finalize"
 )
 
 // Steps lists all steps in order.
-var Steps = []string{StepPrecheck, StepPrepare, StepPresync, StepDelta, StepFence, StepSwitchover, StepCutover, StepVerify, StepFinalize}
+var Steps = []string{StepPrecheck, StepPrepare, StepPresync, StepDelta, StepFence, StepSwitchover, StepStartTarget, StepCutover, StepVerify, StepFinalize}
 
 // Event kinds.
 const (
@@ -81,6 +88,9 @@ type Options struct {
 	Connect                      Connector
 	Files                        FileSyncer
 	Verifier                     Verifier
+	// App and Prober serve a cold plan's target app (ADR 0012).
+	App    App
+	Prober Prober
 	// PollInterval is the base polling period (default 2s). Shorter waits scale from it.
 	PollInterval time.Duration
 }
@@ -99,6 +109,8 @@ type Engine struct {
 	gw           gateway.Gateway
 	rclone       FileSyncer // nil when the plan has no files
 	verifier     Verifier
+	app          App // nil unless the plan is cold
+	prober       Prober
 	poll         time.Duration
 
 	// tokenBeforeDemote is the source demotion token seen just before this run
@@ -154,6 +166,19 @@ func New(p *plan.Plan, opt Options) (*Engine, error) {
 	e.verifier = opt.Verifier
 	if e.verifier == nil {
 		e.verifier = sqlVerifier{plan: p, rc: e.rclone}
+	}
+	if a := p.Target.App; a.Cold() {
+		e.app, e.prober = opt.App, opt.Prober
+		if e.app == nil {
+			dyn, err := kube.Dynamic(p.Target.Kubeconfig, p.Target.Context)
+			if err != nil {
+				return nil, fmt.Errorf("target app: %w", err)
+			}
+			e.app = kubeApp{inv: &kube.Inventory{Dyn: dyn, Namespace: p.Target.Namespace}, res: kube.Resource{Kind: a.Kind, Name: a.Name}}
+		}
+		if e.prober == nil {
+			e.prober = httpProber{client: &http.Client{Timeout: 10 * time.Second}}
+		}
 	}
 
 	runID := opt.RunID
@@ -284,20 +309,37 @@ func (e *Engine) checkRunnable() error {
 type stepFunc func(*Engine, context.Context) (map[string]any, error)
 
 var stepFuncs = map[string]stepFunc{
-	StepPrecheck:   (*Engine).precheck,
-	StepPrepare:    (*Engine).prepare,
-	StepPresync:    (*Engine).presync,
-	StepDelta:      (*Engine).delta,
-	StepFence:      (*Engine).fence,
-	StepSwitchover: (*Engine).switchover,
-	StepCutover:    (*Engine).cutover,
-	StepVerify:     (*Engine).verify,
-	StepFinalize:   (*Engine).finalize,
+	StepPrecheck:    (*Engine).precheck,
+	StepPrepare:     (*Engine).prepare,
+	StepPresync:     (*Engine).presync,
+	StepDelta:       (*Engine).delta,
+	StepFence:       (*Engine).fence,
+	StepSwitchover:  (*Engine).switchover,
+	StepStartTarget: (*Engine).startTarget,
+	StepCutover:     (*Engine).cutover,
+	StepVerify:      (*Engine).verify,
+	StepFinalize:    (*Engine).finalize,
+}
+
+// skipReason says why a step has nothing to do for this plan ("" = run it).
+func (e *Engine) skipReason(name string) string {
+	if name == StepStartTarget && !e.plan.Target.App.Cold() {
+		return "warm mode: the target app already runs"
+	}
+	return ""
 }
 
 func (e *Engine) runStep(ctx context.Context, name string) error {
 	rec := e.state.Steps[name]
 	now := time.Now().UTC()
+	if reason := e.skipReason(name); reason != "" {
+		e.mu.Lock()
+		rec.Status, rec.StartedAt, rec.EndedAt, rec.Error, rec.Evidence = StatusSucceeded, &now, &now, "", map[string]any{"skipped": reason}
+		e.mu.Unlock()
+		e.save()
+		e.emit(name, EventStepSkipped, reason, nil)
+		return nil
+	}
 	e.mu.Lock()
 	rec.Status, rec.StartedAt, rec.EndedAt, rec.Error, rec.Evidence = StatusRunning, &now, nil, "", nil
 	e.mu.Unlock()
@@ -332,10 +374,34 @@ func (e *Engine) onFailure(step string, cause error) error {
 	e.mu.Unlock()
 
 	// A fresh context: the caller's may already be cancelled (e.g. Ctrl-C).
-	ctx, cancel := context.WithTimeout(context.Background(), 2*e.plan.Thresholds.SwitchoverTimeout.Duration+demotionGrace+rollbackSlack)
+	budget := 2*e.plan.Thresholds.SwitchoverTimeout.Duration + demotionGrace + rollbackSlack
+	if a := e.plan.Target.App; a.Cold() {
+		budget += a.StartTimeout.Duration + e.plan.Thresholds.CatchupTimeout.Duration
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 
 	switch {
+	case e.canRevertPromotion(step):
+		e.emit(step, EventRollback, "target app did not start; demoting the promoted target while the gateway still holds every write", nil)
+		rbErr := e.rollbackPromoted(ctx)
+		e.mu.Lock()
+		if rbErr != nil {
+			e.state.RollbackError = rbErr.Error()
+			e.state.Outcome = OutcomeHalted
+		} else {
+			e.state.Outcome = OutcomeRolledBack
+		}
+		e.mu.Unlock()
+		e.save()
+		if rbErr != nil {
+			e.emit(step, EventHalt, "rollback after promotion failed; operator action required: "+rbErr.Error(),
+				map[string]any{"writesHeld": e.state.WritesHeld, "trafficOnTarget": e.state.TrafficOnTarget})
+			return fmt.Errorf("%s failed (%v) and rollback failed: %w", step, cause, rbErr)
+		}
+		e.emit(step, EventRollback, "rolled back; source is primary and serving traffic", nil)
+		return fmt.Errorf("rolled back after %s: %w", step, cause)
+
 	case e.state.PromoteRequested:
 		e.mu.Lock()
 		e.state.Outcome = OutcomeHalted
@@ -441,6 +507,97 @@ func (e *Engine) rollback(ctx context.Context) error {
 		e.mu.Unlock()
 		e.save()
 	}
+	return nil
+}
+
+// canRevertPromotion is the one place a promoted target may be demoted again
+// (ADR 0012): a cold plan's start-target failed while the gateway still holds
+// every user write and routes to the source, so no user write reached the
+// target. Anything less certain halts as before.
+func (e *Engine) canRevertPromotion(step string) bool {
+	return step == StepStartTarget && e.plan.Target.App.Cold() &&
+		e.state.PromoteRequested && e.state.SourceDemoted && e.state.WritesHeld && !e.state.TrafficOnTarget
+}
+
+// rollbackPromoted undoes a switchover whose target app did not start: stop
+// the target app, demote the target, promote the source with the target's
+// demotion token, check the target follows the source again, and release the
+// held writes to the source. Any failure leaves the rest to an operator.
+func (e *Engine) rollbackPromoted(ctx context.Context) error {
+	const step = StepStartTarget
+	a := e.plan.Target.App
+
+	// 1. No target app pods: their start-up writes stop, and their sessions do
+	// not delay the demotion's shutdown.
+	if err := e.app.Stop(ctx); err != nil {
+		return fmt.Errorf("stop target app: %w", err)
+	}
+	if err := e.waitAppStopped(ctx, a.StartTimeout.Duration); err != nil {
+		return err
+	}
+	e.log(step, "target app stopped", nil)
+
+	// 2. Demote the target; CNPG publishes a token once it runs as a replica.
+	srcSelf, err := e.selfName(ctx, e.src)
+	if err != nil {
+		return err
+	}
+	dst, err := e.dst.Get(ctx)
+	if err != nil {
+		return err
+	}
+	before := dst.DemotionToken
+	if err := e.dst.SetPrimary(ctx, srcSelf, ""); err != nil {
+		return fmt.Errorf("demote target: %w", err)
+	}
+	e.log(step, "target demotion requested", map[string]any{"newPrimary": srcSelf})
+	wctx, cancel := context.WithTimeout(ctx, e.plan.Thresholds.SwitchoverTimeout.Duration+demotionGrace)
+	demoted, err := e.dst.WaitFor(wctx, e.poll, func(s *cnpg.Status) bool { return s.DemotionToken != "" && s.DemotionToken != before })
+	if err == nil {
+		err = e.waitRecovery(wctx, e.plan.Target.DSN, &e.dstDB, true)
+	}
+	cancel()
+	if err != nil {
+		return fmt.Errorf("target demotion did not finish, not re-promoting the source mid-transition: %w", err)
+	}
+	e.setFlags(func(s *State) { s.PromoteRequested = false })
+
+	// 3. Promote the source with the target's token, then wait for it to settle
+	// (ADR 0009) before any write is released to it.
+	if err := e.src.SetPrimary(ctx, srcSelf, demoted.DemotionToken); err != nil {
+		return fmt.Errorf("re-promote source: %w", err)
+	}
+	e.log(step, "re-promoting source", map[string]any{"primary": srcSelf})
+	if err := e.waitWritable(ctx, e.plan.Source.DSN, &e.srcDB); err != nil {
+		return fmt.Errorf("source did not become writable again: %w", err)
+	}
+	start := time.Now()
+	if err := e.waitSettled(ctx, e.src, e.plan.Source.DSN, &e.srcDB); err != nil {
+		return fmt.Errorf("source did not settle after re-promotion: %w", err)
+	}
+	e.log(step, "source settled", map[string]any{"settleMillis": time.Since(start).Milliseconds()})
+	e.setFlags(func(s *State) { s.SourceDemoted = false })
+
+	// 4. The target follows the source again, so the next attempt starts from
+	// the usual topology.
+	if lag, err := e.waitCaughtUp(ctx, step, e.plan.Thresholds.CatchupTimeout.Duration); err != nil {
+		return fmt.Errorf("target does not follow the source again (lag %d): %w", lag, err)
+	}
+
+	// 5. Release the held writes to the source.
+	if err := e.gw.Route(ctx, e.plan.Gateway.SourceBackend); err != nil {
+		return err
+	}
+	if err := e.gw.ReleaseWrites(ctx); err != nil {
+		return err
+	}
+	e.mu.Lock()
+	e.state.WritesHeld = false
+	if e.state.WritesHeldAt != nil {
+		e.state.DowntimeMillis = time.Since(*e.state.WritesHeldAt).Milliseconds()
+	}
+	e.mu.Unlock()
+	e.save()
 	return nil
 }
 

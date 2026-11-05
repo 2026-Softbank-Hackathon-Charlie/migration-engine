@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/cnpg"
+	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/plan"
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/verify"
 )
 
@@ -63,6 +64,14 @@ func (e *Engine) precheck(ctx context.Context) (map[string]any, error) {
 	}
 	if err := e.gw.Health(ctx); err != nil {
 		return ev, fmt.Errorf("gateway: %w", err)
+	}
+	if a := e.plan.Target.App; a.Cold() {
+		// Reading the workload proves it exists and the engine may see it.
+		n, err := e.app.Running(ctx)
+		if err != nil {
+			return ev, fmt.Errorf("target app %s/%s: %w", a.Kind, a.Name, err)
+		}
+		ev["targetApp"] = map[string]any{"mode": a.Mode, "kind": a.Kind, "name": a.Name, "podsNow": n}
 	}
 	return ev, nil
 }
@@ -122,6 +131,17 @@ func (e *Engine) prepare(ctx context.Context) (map[string]any, error) {
 	}
 	if !rec {
 		return ev, errors.New("target database is writable; it must be a replica before migration")
+	}
+	if a := e.plan.Target.App; a.Cold() {
+		// A cold app must not run on the replica (it would fail or crash-loop
+		// on its start-up schema change); it starts after promotion.
+		if err := e.app.Stop(ctx); err != nil {
+			return ev, fmt.Errorf("stop target app: %w", err)
+		}
+		if err := e.waitAppStopped(ctx, a.StartTimeout.Duration); err != nil {
+			return ev, err
+		}
+		ev["targetApp"] = "stopped until the target is promoted"
 	}
 	return ev, nil
 }
@@ -276,6 +296,127 @@ func (e *Engine) switchover(ctx context.Context) (map[string]any, error) {
 	}
 	ev["settleMillis"] = time.Since(start).Milliseconds()
 	return ev, nil
+}
+
+// startTarget (cold plans): start the target app on the promoted primary,
+// wait for its pods to be ready and smoke-test it directly. The gateway still
+// holds writes and routes to the source, so users reach nothing here. The
+// write hold must stay within maxDowntime; past it the step fails and the
+// promotion is undone (ADR 0012).
+func (e *Engine) startTarget(ctx context.Context) (map[string]any, error) {
+	a := e.plan.Target.App
+	ev := map[string]any{"kind": a.Kind, "name": a.Name, "replicas": a.Replicas}
+	timeout := a.StartTimeout.Duration
+	var held time.Duration
+	if e.state.WritesHeldAt != nil {
+		held = time.Since(*e.state.WritesHeldAt)
+		if left := e.plan.Thresholds.MaxDowntime.Duration - held; left < timeout {
+			timeout = left
+		}
+	}
+	if timeout <= 0 {
+		return ev, fmt.Errorf("writes already held %s, over maxDowntime %s, before the app started", held.Round(time.Millisecond), e.plan.Thresholds.MaxDowntime.Duration)
+	}
+	tctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	start := time.Now()
+
+	if err := e.app.Scale(tctx, a.Replicas); err != nil {
+		return ev, fmt.Errorf("scale target app: %w", err)
+	}
+	e.log(StepStartTarget, "target app scaled up", map[string]any{"replicas": a.Replicas})
+	var ready int64
+	for {
+		n, err := e.app.Ready(tctx)
+		if err == nil {
+			ready = n
+			if n >= a.Replicas {
+				break
+			}
+		}
+		select {
+		case <-tctx.Done():
+			ev["ready"] = ready
+			return ev, fmt.Errorf("target app has %d of %d ready pods after %s (last error: %v)", ready, a.Replicas, timeout.Round(time.Millisecond), err)
+		case <-time.After(e.poll / 2):
+		}
+	}
+	ev["ready"] = ready
+	ev["readyMillis"] = time.Since(start).Milliseconds()
+
+	// A pod can be ready a moment before it answers through its Service:
+	// repeat the smoke set until every request passes or the time is up.
+	for {
+		results, failed := e.smoke(tctx, a)
+		ev["smoke"] = results
+		if failed == 0 {
+			break
+		}
+		select {
+		case <-tctx.Done():
+			return ev, fmt.Errorf("%d of %d smoke requests to the target app failed", failed, len(results))
+		case <-time.After(e.poll):
+		}
+	}
+	ev["startMillis"] = time.Since(start).Milliseconds()
+	e.log(StepStartTarget, "target app answers", map[string]any{"startMillis": ev["startMillis"]})
+	return ev, nil
+}
+
+// SmokeResult is one smoke request's outcome.
+type SmokeResult struct {
+	Method string `json:"method"`
+	Path   string `json:"path"`
+	Status int    `json:"status,omitempty"`
+	OK     bool   `json:"ok"`
+	Error  string `json:"error,omitempty"`
+	Millis int64  `json:"millis"`
+}
+
+func (e *Engine) smoke(ctx context.Context, a *plan.AppSpec) ([]SmokeResult, int) {
+	base := strings.TrimRight(a.SmokeURL, "/")
+	results := make([]SmokeResult, 0, len(a.Smoke))
+	failed := 0
+	for _, q := range a.Smoke {
+		start := time.Now()
+		code, err := e.prober.Probe(ctx, q.Method, base+q.Path)
+		r := SmokeResult{Method: q.Method, Path: q.Path, Status: code, Millis: time.Since(start).Milliseconds()}
+		switch {
+		case err != nil:
+			r.Error = err.Error()
+		case q.Expect != 0:
+			r.OK = code == q.Expect
+		default:
+			r.OK = code/100 == 2
+		}
+		if !r.OK {
+			failed++
+		}
+		results = append(results, r)
+	}
+	return results, failed
+}
+
+// waitAppStopped waits until no target app pod exists, terminating ones
+// included (ADR 0011: a stopping pod still holds its connections).
+func (e *Engine) waitAppStopped(ctx context.Context, timeout time.Duration) error {
+	wctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	var last int64 = -1
+	for {
+		n, err := e.app.Running(wctx)
+		if err == nil {
+			last = n
+			if n == 0 {
+				return nil
+			}
+		}
+		select {
+		case <-wctx.Done():
+			return fmt.Errorf("target app still has %d pods after %s (last error: %v)", last, timeout, err)
+		case <-time.After(e.poll / 2):
+		}
+	}
 }
 
 // cutover: route all traffic to the target and release held writes there.

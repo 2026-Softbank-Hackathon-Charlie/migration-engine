@@ -38,6 +38,12 @@ type world struct {
 	srcRestartGets   int // source cluster is unhealthy for this many Gets after a rollback re-promotes it
 	sourceDownCalls  int // old source is unreachable for this many calls after cutover
 
+	// Cold plans (ADR 0012).
+	app                   *fakeApp
+	prober                *fakeProber
+	dstDemoteErr          error // demoting the promoted target fails
+	noTargetDemotionToken bool  // the demoted target never publishes a token
+
 	calls []string // ordered log of every side effect, for order assertions
 }
 
@@ -68,6 +74,8 @@ func newWorld() *world {
 	w.gw = &fakeGateway{w: w}
 	w.files = &fakeFiles{w: w}
 	w.ver = &fakeVerifier{w: w, gateOK: true, reportOK: true}
+	w.app = &fakeApp{w: w, replicas: 2, ready: 0} // deployed, crash-looping on the replica
+	w.prober = &fakeProber{w: w}
 	return w
 }
 
@@ -173,8 +181,111 @@ func (c *fakeCluster) SetPrimary(_ context.Context, primary, token string) error
 			c.st.Phase = "Primary instance is being restarted in-place"
 			w.dstDB.pendingRestart = true
 		}
+	case c.role == "dst" && primary != c.st.Self: // demote the promoted target (cold rollback)
+		if c.w.dstDemoteErr != nil {
+			return c.w.dstDemoteErr
+		}
+		w.dstDB.recovery = true
+		if !w.noTargetDemotionToken {
+			c.st.DemotionToken = "tokd-" + strconv.FormatInt(w.dstDB.pos, 10)
+		}
 	}
 	return nil
+}
+
+// --- target app (cold plans) ---
+
+type fakeApp struct {
+	w         *world
+	replicas  int64
+	ready     int64
+	stopErr   error
+	scaleErr  error
+	neverUp   bool // pods never become ready
+	neverDown bool // pods never go away
+	runErr    error
+	// stopErrFrom makes the n-th and later Stop calls fail (0 = never):
+	// 2 lets prepare stop the app and fails the rollback's stop.
+	stopErrFrom int
+	stops       int
+}
+
+func (a *fakeApp) Stop(context.Context) error {
+	a.w.record("app.stop")
+	a.w.mu.Lock()
+	defer a.w.mu.Unlock()
+	a.stops++
+	if a.stopErr != nil {
+		return a.stopErr
+	}
+	if a.stopErrFrom > 0 && a.stops >= a.stopErrFrom {
+		return errors.New("deployments.apps \"web\" is forbidden")
+	}
+	a.replicas, a.ready = 0, 0
+	return nil
+}
+
+func (a *fakeApp) Scale(_ context.Context, n int64) error {
+	a.w.record(fmt.Sprintf("app.scale %d", n))
+	a.w.mu.Lock()
+	defer a.w.mu.Unlock()
+	if a.scaleErr != nil {
+		return a.scaleErr
+	}
+	a.replicas = n
+	if !a.neverUp {
+		a.ready = n
+	}
+	return nil
+}
+
+// Ready: like an app that migrates its schema on start, pods are never ready
+// while the target database is still a read-only replica.
+func (a *fakeApp) Ready(context.Context) (int64, error) {
+	a.w.mu.Lock()
+	defer a.w.mu.Unlock()
+	if a.w.dstDB.recovery {
+		return 0, nil
+	}
+	return a.ready, nil
+}
+
+func (a *fakeApp) Running(context.Context) (int64, error) {
+	a.w.mu.Lock()
+	defer a.w.mu.Unlock()
+	if a.runErr != nil {
+		return 0, a.runErr
+	}
+	if a.neverDown {
+		return 1, nil
+	}
+	return a.replicas, nil
+}
+
+type fakeProber struct {
+	w      *world
+	status int // returned for every request; 0 means 200
+	err    error
+	// The target app's answers depend on the database: it fails while the
+	// target is still a replica (the app's start-up schema change cannot run).
+	urls []string
+}
+
+func (p *fakeProber) Probe(_ context.Context, method, url string) (int, error) {
+	p.w.record("probe " + method + " " + url)
+	p.w.mu.Lock()
+	defer p.w.mu.Unlock()
+	p.urls = append(p.urls, url)
+	if p.err != nil {
+		return 0, p.err
+	}
+	if p.w.dstDB.recovery {
+		return 503, nil
+	}
+	if p.status != 0 {
+		return p.status, nil
+	}
+	return 200, nil
 }
 
 func (c *fakeCluster) WaitFor(ctx context.Context, interval time.Duration, cond func(*cnpg.Status) bool) (*cnpg.Status, error) {
@@ -358,6 +469,28 @@ func newHarness(t *testing.T) *harness {
 	return &harness{w: newWorld(), p: testPlan(t, true), dir: t.TempDir()}
 }
 
+// coldPlan is testPlan with the gateway and a cold target app (ADR 0012).
+func coldPlan(t *testing.T) *plan.Plan {
+	t.Helper()
+	p, err := plan.Parse([]byte(`{
+	  "id": "shop-gke-to-eks",
+	  "source": {"env":"gke","namespace":"shop","cluster":"db-gke","dsn":"src-dsn"},
+	  "target": {"env":"eks","namespace":"shop","cluster":"db-eks","dsn":"dst-dsn","manifest":"target.yaml",
+	    "app": {"mode":"cold","kind":"Deployment","name":"web","replicas":2,"startTimeout":"500ms",
+	      "smokeUrl":"http://web.shop.svc:8080","smoke":[{"method":"GET","path":"/healthz"}]}},
+	  "gateway": {"mode":"http","url":"http://gw:9901"},
+	  "files": {"source":"src:b","target":"dst:b"},
+	  "thresholds": {"catchupTimeout":"2s","switchoverTimeout":"1s","maxDowntime":"3m"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func newColdHarness(t *testing.T) *harness {
+	return &harness{w: newWorld(), p: coldPlan(t), dir: t.TempDir()}
+}
+
 func (h *harness) engine(t *testing.T, runID string) *Engine {
 	t.Helper()
 	e, err := New(h.p, Options{
@@ -370,6 +503,8 @@ func (h *harness) engine(t *testing.T, runID string) *Engine {
 		Connect:       h.w.connect,
 		Files:         h.w.files,
 		Verifier:      h.w.ver,
+		App:           h.w.app,
+		Prober:        h.w.prober,
 		PollInterval:  8 * time.Millisecond,
 	})
 	if err != nil {

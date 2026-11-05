@@ -1,0 +1,22 @@
+engine start 08:05:38
+run hello-gke-to-eks-20261105-080538 (state: .hopcharlie/runs/hello-gke-to-eks-20261105-080538.json)
+08:05:38.948 ▶ precheck
+08:05:39.572 ✔ precheck (623 ms)
+08:05:39.572 ▶ prepare
+08:05:39.607 ✔ prepare (34 ms)
+08:05:39.607 ▶ presync
+08:05:39.860   presync replication lag lagBytes=0 sourceLsn=0/110899B8 targetLsn=0/110899B8
+08:05:39.860 ✔ presync (253 ms)
+08:05:39.860 ▶ delta
+08:05:39.986   delta replication lag lagBytes=0 sourceLsn=0/11089B38 targetLsn=0/11089B38
+08:05:39.986 ✔ delta (125 ms)
+08:05:39.986 ▶ fence
+08:05:39.987   fence writes held at gateway
+08:05:40.050 ✔ fence (63 ms)
+08:05:40.050 ▶ switchover
+08:05:40.548 ✘ switchover: fence gate: data mismatch in public.visits
+08:05:40.548 ! switchover [rollback] rolling back to source
+08:05:40.548 ! switchover [rollback] rolled back; source is primary and serving traffic
+error: rolled back after switchover: fence gate: data mismatch in public.visits
+engine exit=1 08:05:40
+DONE

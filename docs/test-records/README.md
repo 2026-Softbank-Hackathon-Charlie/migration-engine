@@ -15,6 +15,7 @@
 | 2026-11-04 | platform 버킷 레지던시 측정 (probe·Rego·inspect API, 실 MinIO 2대) | 통과, 결함 1건 수정 | [아래](#2026-11-04-platform-버킷-레지던시-측정) |
 | 2026-11-04 | platform 동등성 기록 모드 (RBAC·Prometheus, 실 k3s·Prometheus) | 통과 | [아래](#2026-11-04-platform-동등성-기록-모드) |
 | 2026-11-04 | moimroom e2e (부하 중 DB·사진 이전 + 원본 정리, kind 새로 생성) | 통과, 쓰기 대기 15.7초, 실패 요청 0, 전체 7분 10초 | [아래](#2026-11-04-moimroom-e2e-시간-측정) |
+| 2026-11-05 | 실제 EKS 이전 리허설 (hello DB, 엔진·부하 클러스터 안에서, 왕복) | 엔진 3/4 성공 (1회차 halt, 원인 port-forward), 응답한 쓰기 누락 0 | [아래](#2026-11-05-실제-eks-이전-리허설) |
 
 ---
 
@@ -263,3 +264,45 @@ kind 클러스터 `hopgw`는 남겨 둠
 - CI 재현: LF로 내보낸 트리를 golang:1.26 + postgres:17.11-alpine 컨테이너에서 vet -race, gofmt, 생성 타입 일치, `go test -race ./...`(31개 패키지, 실패 0), `-tags minio` 통과
 - 발견·수정: RBAC 규칙의 `allowed`를 빠뜨리면 조용히 "거부"가 되던 설정 설계를 필수 필드로 바꿈
 - 검증하지 않은 것: 실제 EKS/GKE와 운영 Prometheus 주소, 플랫폼 자격 증명의 대상 클러스터 SAR 생성 권한, infra 설정(운영에서는 꺼져 있음)
+
+## 2026-11-05 실제 EKS 이전 리허설
+
+- 대상: migration-engine main `399f278` (`hopmigrate` linux/amd64 빌드), 부하 프로그램 [writer.go](2026-11-05-eks-hello-rehearsal/writer.go)
+- 환경: 워크로드 EKS `charlie-dev-workload`, CNPG operator 1.30.1, PostgreSQL 18.6, 네임스페이스 `hello` 하나에 CNPG 두 개(`hello-src`, `hello-dst`, 각 1 인스턴스, gp3 1Gi). 기존 앱과 DB는 건드리지 않음
+- 원본 데이터: greetings 50,000행, visits 1,000행(시드)
+- 부하: 0.1초마다 `visits`에 한 행. 쓰기를 받는 DB에 쓰고, 실패하면 다른 DB로 옮겨 감(재접속하는 앱 흉내). 응답을 받은 id만 기록하고 끝난 뒤 양쪽 DB에서 모두 있는지 확인
+- `gateway.mode: none`. 게이트웨이 쓰기 보류 없이 앱(부하 프로그램)이 직접 새 primary로 옮겨 감
+- 입력과 원시 로그: [2026-11-05-eks-hello-rehearsal/](2026-11-05-eks-hello-rehearsal/) (매니페스트, Plan, 실행 파드, 회차별 엔진·부하 로그)
+
+| # | 방향 | 엔진·부하 실행 위치 | 엔진 결과 | 엔진 다운타임 | 부하 결과 |
+|---|---|---|---|---|---|
+| 1 | src → dst (대상 새로 생성) | 로컬 PC, DB는 `kubectl port-forward` | **halted** at switchover | – | 응답한 쓰기 1,980건 누락 0. 실패 1,515건은 대부분 port-forward 끊김 |
+| 2 | dst → src (원복) | 클러스터 안 파드 | succeeded | 8,422 ms | 무효 (부하 프로그램 id 충돌) |
+| 3 | src → dst | 클러스터 안 파드 | succeeded | 9,359 ms | 무효 (같은 이유) |
+| 4 | dst → src (원복) | 클러스터 안 파드 | succeeded | 13,930 ms | **응답한 쓰기 1,775건 누락 0** (새 primary, 복제본 모두), 실패 25건, 가장 긴 쓰기 공백 2.4초 |
+
+- 4회차 흐름: 07:21:18.2 원본 강등 요청 → 07:21:20.2 대상 승격 요청 → 07:21:20.9 부하가 새 primary에 쓰기 시작 → 07:21:32.0 엔진이 새 primary 안정 확인 후 완료. `hopmigrate verify`: greetings 50,000행, visits 5,395행, 누락 0
+- 1회차 prepare(대상 생성과 pg_basebackup) 90초. 이후 회차는 대상이 있어 30ms
+- 2→3→4회차는 이전 강등 토큰이 남은 상태에서 연속으로 왕복함. 셋 다 성공
+- 엔진 다운타임과 앱 쓰기 공백은 다르다. 엔진은 새 primary가 CNPG 재시작까지 마치고 두 번 연속 정상일 때까지 기다린다(8~14초). 게이트웨이를 쓰는 실제 흐름에서는 쓰기를 이 시간만큼 붙잡는다. 부하 프로그램은 게이트웨이 없이 승격 직후 바로 썼으므로 공백이 2.4초였다
+
+### 1회차 halt
+
+- 엔진이 대상 승격을 요청한 뒤 `target did not settle after promotion: context deadline exceeded`(switchoverTimeout 3분)로 멈췄다. 승격 요청 뒤라 원본을 다시 승격하지 않았다(split-brain 방지, 설계대로). 실제 DB는 dst primary, src replica streaming으로 전환이 끝난 상태였고, 응답한 쓰기는 누락 0
+- 원인: DSN이 로컬 `kubectl port-forward`를 거쳤다. 엔진이 돌던 동안 DB 쪽 `connection reset by peer`가 43회 나왔고, 그때마다 port-forward가 통째로 끝나 다시 붙었다. 엔진의 안정 확인(`waitSettled`)은 두 번 연속 성공을 요구하므로 3분 동안 통과하지 못했다. 엔진이 끝난 16:07:54 뒤로 port-forward는 끊기지 않았다
+- 확인하지 못한 것: 엔진이 돌던 동안에만 reset이 몰린 이유
+- 조치: 2회차부터 엔진과 부하를 클러스터 안 파드(`hello` 네임스페이스에만 권한이 있는 ServiceAccount)에서 실행했다. halted run은 엔진이 재개를 거부하므로(`run ... is halted; start a new run`) 새 run으로 진행했다
+
+### 발견한 것
+
+- 부하 프로그램 결함: 회차마다 id를 1부터 써서 2·3회차에 앞 회차의 id와 충돌했다. 4회차부터 시작 id를 시각 기반으로 바꿨다. 엔진 결과에는 영향이 없다
+- `gateway.mode: none`에서도 fence 로그가 `writes held at gateway`라고 찍힌다. 실제로는 아무것도 붙잡지 않으므로 로그 문구가 사실과 다르다. 고치지 않음
+
+### 검증하지 않은 것
+
+- 클러스터 사이 네트워크(EKS ↔ GKE), 게이트웨이 쓰기 보류와 카나리, 플랫폼 API 경로, 파일 이전, 앱 트래픽(HTTP)
+- 실패 주입(switchover 시간 초과 → rolled_back)은 이번에 하지 않음
+
+### 남긴 것
+
+- 워크로드 EKS 네임스페이스 `hello`(CNPG 두 개, 실행 파드 `hello-runner`, Role, gp3 1Gi 두 개)는 다음 단계(EKS → GKE)에 다시 쓰려고 남겨 둠. `kubectl delete ns hello`로 정리

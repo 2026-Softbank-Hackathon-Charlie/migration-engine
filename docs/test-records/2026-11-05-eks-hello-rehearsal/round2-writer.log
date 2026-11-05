@@ -1,0 +1,18 @@
+07:13:50 ok=0 failed=101 writing to a
+07:14:00 ok=0 failed=202 writing to a
+07:14:10 ok=0 failed=303 writing to a
+07:14:21 ok=0 failed=404 writing to a
+07:14:31 ok=0 failed=504 writing to a
+07:14:41 ok=0 failed=605 writing to a
+07:14:51 ok=0 failed=705 writing to a
+07:15:01 ok=0 failed=805 writing to a
+07:15:11 ok=0 failed=905 writing to a
+07:15:21 ok=0 failed=1006 writing to a
+07:15:31 ok=21 failed=1086 writing to a
+07:15:41 ok=109 failed=1099 writing to a
+07:15:51 ok=197 failed=1112 writing to a
+07:16:01 ok=290 failed=1120 writing to a
+07:16:11 ok=381 failed=1130 writing to a
+07:16:21 ok=469 failed=1142 writing to a
+07:16:31 ok=553 failed=1158 writing to a
+RESULT ok=632 failed=1168 longest_gap=1m48.609s (from 07:13:40.776) ran=3m0s last=a

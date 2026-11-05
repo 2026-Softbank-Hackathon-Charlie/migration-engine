@@ -1,0 +1,30 @@
+engine start 07:17:39
+run hello-src-to-dst-20261105-071739 (state: .hopcharlie/runs/hello-src-to-dst-20261105-071739.json)
+07:17:39.854 ▶ precheck
+07:17:39.883 ✔ precheck (28 ms)
+07:17:39.883 ▶ prepare
+07:17:39.910 ✔ prepare (27 ms)
+07:17:39.910 ▶ presync
+07:17:39.911   presync replication lag lagBytes=0 sourceLsn=0/90737B0 targetLsn=0/90737B0
+07:17:39.911 ✔ presync (1 ms)
+07:17:39.911 ▶ delta
+07:17:39.912   delta replication lag lagBytes=0 sourceLsn=0/90737B0 targetLsn=0/90737B0
+07:17:39.912 ✔ delta (0 ms)
+07:17:39.912 ▶ fence
+07:17:39.912   fence writes held at gateway
+07:17:39.913 ✔ fence (0 ms)
+07:17:39.913 ▶ switchover
+07:17:40.031   switchover fence gate passed tables=2
+07:17:40.083   switchover source demotion requested newPrimary=hello-dst
+07:17:42.118   switchover target promotion requested oldPrimary=hello-src
+07:17:49.272 ✔ switchover (9358 ms)
+07:17:49.272 ▶ cutover
+07:17:49.272   cutover write downtime downtimeMillis=9359
+07:17:49.272 ✔ cutover (0 ms)
+07:17:49.272 ▶ verify
+07:17:49.331 ✔ verify (58 ms)
+07:17:49.331 ▶ finalize
+07:17:49.345 ✔ finalize (13 ms)
+07:17:49.345 ★ migration succeeded downtimeMillis=9359
+engine exit=0 07:17:49
+DONE

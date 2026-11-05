@@ -1,0 +1,10 @@
+{
+  "id": "hello-src-to-dst",
+  "source": { "env": "hello-src", "kubeconfig": "<infra>/.generated/access/workload.kubeconfig", "context": "charlie-dev-workload", "namespace": "hello", "cluster": "hello-src",
+              "dsn": "postgres://app:${HELLO_PGPASSWORD}@127.0.0.1:55542/app?sslmode=require" },
+  "target": { "env": "hello-dst", "kubeconfig": "<infra>/.generated/access/workload.kubeconfig", "context": "charlie-dev-workload", "namespace": "hello", "cluster": "hello-dst",
+              "dsn": "postgres://app:${HELLO_PGPASSWORD}@127.0.0.1:55543/app?sslmode=require", "manifest": "<work>/target.yaml" },
+  "gateway": { "mode": "none" },
+  "verify": { "schemas": ["public"], "fenceGate": true },
+  "thresholds": { "maxLagBytes": 1048576, "catchupTimeout": "10m", "switchoverTimeout": "3m", "maxDowntime": "3m" }
+}

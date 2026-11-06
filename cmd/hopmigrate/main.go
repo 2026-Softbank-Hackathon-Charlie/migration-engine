@@ -43,7 +43,7 @@ Commands:
   decommission  After a succeeded run: stop the old app, prove nothing uses the
             source, block it, smoke-test, and report what is left (-undo puts it back)
 
-Steps: ` + "precheck → prepare → presync → delta → fence → switchover → cutover → verify → finalize" + `
+Steps: ` + "precheck → prepare → presync → delta → fence → switchover → start-target → cutover → verify → finalize" + `
 
 Run "hopmigrate <command> -h" for flags.
 `

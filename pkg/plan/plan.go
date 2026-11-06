@@ -43,7 +43,41 @@ type Endpoint struct {
 	DSN string `json:"dsn"`
 	// Manifest (target only): CNPG Cluster YAML applied when the target Cluster does not exist yet.
 	Manifest string `json:"manifest,omitempty"`
+	// App (target only) says when the target app starts (ADR 0012). Omitted means warm.
+	App *AppSpec `json:"app,omitempty"`
 }
+
+// App start modes (ADR 0012).
+const (
+	// AppWarm: the target app already runs on the replica before the switch
+	// (the default; canary reads are possible).
+	AppWarm = "warm"
+	// AppCold: the target app is kept at zero replicas and started only after
+	// the target database is promoted, for apps that change the schema on
+	// start and cannot run on a read-only replica.
+	AppCold = "cold"
+)
+
+// AppSpec is the target app workload for the cold mode.
+type AppSpec struct {
+	Mode string `json:"mode,omitempty"` // "warm" (default) or "cold"
+	// Kind is Deployment or StatefulSet in target.namespace.
+	Kind string `json:"kind,omitempty"`
+	Name string `json:"name,omitempty"`
+	// Replicas the app is started with after promotion.
+	Replicas int64 `json:"replicas,omitempty"`
+	// StartTimeout bounds scaling up and waiting for ready pods. Default 3m.
+	StartTimeout Duration `json:"startTimeout,omitempty"`
+	// SmokeURL reaches the target app directly, not through the gateway
+	// (the gateway still points at the source while the app starts).
+	SmokeURL string `json:"smokeUrl,omitempty"`
+	// Smoke requests must all succeed before traffic moves. Read-only
+	// (GET or HEAD): users' writes must not reach the target before cutover.
+	Smoke []SmokeRequest `json:"smoke,omitempty"`
+}
+
+// Cold reports whether the target app starts after promotion.
+func (a *AppSpec) Cold() bool { return a != nil && a.Mode == AppCold }
 
 // FilesSpec configures rclone-based object storage migration.
 // Remotes are configured through rclone env vars (RCLONE_CONFIG_<NAME>_*).
@@ -192,6 +226,14 @@ func (p *Plan) applyDefaults() {
 	if d := p.Decommission; d != nil && d.Observe.Duration == 0 {
 		d.Observe.Duration = 2 * time.Minute
 	}
+	if a := p.Target.App; a != nil {
+		if a.Mode == "" {
+			a.Mode = AppWarm
+		}
+		if a.Mode == AppCold && a.StartTimeout.Duration == 0 {
+			a.StartTimeout.Duration = 3 * time.Minute
+		}
+	}
 }
 
 // Validate checks that the plan is executable.
@@ -238,7 +280,59 @@ func (p *Plan) Validate() error {
 	if d := p.Decommission; d != nil {
 		errs = append(errs, d.validate()...)
 	}
+	if p.Source.App != nil {
+		errs = append(errs, errors.New("source.app is not supported (target only)"))
+	}
+	if a := p.Target.App; a != nil {
+		errs = append(errs, a.validate(p)...)
+	}
 	return errors.Join(errs...)
+}
+
+func (a *AppSpec) validate(p *Plan) []error {
+	var errs []error
+	switch a.Mode {
+	case AppWarm:
+		return nil
+	case AppCold:
+	default:
+		return []error{fmt.Errorf("target.app.mode must be %q or %q, got %q", AppWarm, AppCold, a.Mode)}
+	}
+	if p.Gateway.Mode != "http" {
+		// Rolling back a promoted target is safe only while the gateway holds
+		// every user write; without it nothing proves the target took none.
+		errs = append(errs, errors.New("target.app.mode cold requires gateway.mode http"))
+	}
+	if a.Kind != "Deployment" && a.Kind != "StatefulSet" {
+		errs = append(errs, fmt.Errorf("target.app.kind must be Deployment or StatefulSet, got %q", a.Kind))
+	}
+	if strings.TrimSpace(a.Name) == "" {
+		errs = append(errs, errors.New("target.app.name is required"))
+	}
+	if a.Replicas < 1 {
+		errs = append(errs, errors.New("target.app.replicas must be at least 1"))
+	}
+	if a.StartTimeout.Duration < 0 || a.StartTimeout.Duration > 30*time.Minute {
+		errs = append(errs, errors.New("target.app.startTimeout must be between 0 and 30m"))
+	}
+	if u, err := url.Parse(a.SmokeURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		errs = append(errs, errors.New("target.app.smokeUrl must be an http(s) URL of the target app"))
+	}
+	if len(a.Smoke) == 0 {
+		errs = append(errs, errors.New("target.app.smoke needs at least one request: traffic moves only after the started app answers"))
+	}
+	for i, r := range a.Smoke {
+		if r.Method != "GET" && r.Method != "HEAD" {
+			errs = append(errs, fmt.Errorf("target.app.smoke[%d].method must be GET or HEAD (no writes before cutover)", i))
+		}
+		if !strings.HasPrefix(r.Path, "/") {
+			errs = append(errs, fmt.Errorf("target.app.smoke[%d].path must start with /", i))
+		}
+		if r.Expect != 0 && (r.Expect < 100 || r.Expect > 599) {
+			errs = append(errs, fmt.Errorf("target.app.smoke[%d].expect is not an HTTP status", i))
+		}
+	}
+	return errs
 }
 
 func (d *DecommissionSpec) validate() []error {

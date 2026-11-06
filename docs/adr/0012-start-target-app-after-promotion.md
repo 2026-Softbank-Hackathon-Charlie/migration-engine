@@ -1,6 +1,6 @@
 # 0012. 기동할 때 스키마를 바꾸는 앱은 대상 승격 뒤에 띄우고, 그 실패는 원복한다
 
-- 상태: 제안
+- 상태: 채택 (엔진 구현 2026-11-05, platform·infra 후속 남음)
 - 날짜: 2026-11-04
 
 ## 상황
@@ -92,3 +92,32 @@ start-target에서 실패해도 사용자 쓰기는 대상에 하나도 들어�
   - 대상 앱이 `cold`로 기동할 때 CNPG settle 재시작과 겹치면 앱 커넥션 풀이 어떻게 되는지. start-target을 settle 뒤에 두는 이유이지만 실제로 재 보지 않았다.
   - 승격된 대상을 다시 강등할 때 CNPG가 정방향 강등(0008)과 같은 시간 안에 끝나는지.
   - 스모크를 게이트웨이를 거치지 않고 대상 앱에 직접 보낼 주소를 Plan에 둘지, 게이트웨이에 "backend 지정 probe"를 둘지.
+
+## 구현 (2026-11-05, 엔진)
+
+이 결정대로 엔진에 구현했다. 구현하면서 정한 세부 사항:
+
+- 단계 이름은 `start-target`, 위치는 switchover와 cutover 사이다. `warm`이면 `step_skipped`로 기록하고 성공으로 친다(재개와 `RunStep` 순서 검사가 그대로 동작).
+- `target.app.replicas`는 필수(1 이상)다. prepare의 Stop이 남긴 annotation으로 원래 개수를 되살리는 대신 Plan 값을 쓴다. 대상 앱을 0개로 배포해 둔 경우 annotation 값이 0이라 쓸 수 없기 때문이다. 늘릴 때(`Scale`) Stop annotation을 지운다. 나중의 Stop이 오래된 값을 기록하지 않게 하려는 것이다.
+- `cold`는 `gateway.mode: http`일 때만 허용한다. 승격을 되돌려도 되는 근거가 "게이트웨이가 모든 쓰기를 붙잡음"이기 때문이다.
+- 스모크는 GET/HEAD만 허용한다. ready 직후 Service가 아직 연결되지 않았을 수 있어서, 모두 통과하거나 시간이 다 될 때까지 반복한다.
+- start-target의 제한 시간은 `startTimeout`과 `maxDowntime - 이미 붙잡은 시간` 중 짧은 쪽이다. 이미 넘었으면 앱을 띄우지 않고 실패한다.
+- prepare는 앱을 0개로 만든 뒤 파드가 모두 없어질 때까지 `startTimeout` 안에서 기다린다(0011과 같은 이유).
+- "hold가 살아 있음"은 게이트웨이에 묻지 않고 엔진 상태 플래그로 확인한다. 게이트웨이 계약(0005)에 hold 조회가 없다. 조건: 실패 단계가 `start-target`, `cold`, `promoteRequested`, `sourceDemoted`, `writesHeld`, `!trafficOnTarget`이다.
+- 원복 4단계는 "대상이 원본을 다시 따라가는지"로 구현했다. 원본이 다시 primary가 되므로 위 원복 순서 4번의 "원본이 대상을 따라가는지"는 방향을 거꾸로 적은 것이다. 확인 방법은 복제 지연이 `maxLagBytes` 이하가 되는 것이다(`catchupTimeout`).
+- 원복에서 대상 강등이 끝났으면 `promoteRequested`를 끈다. 이후 원본 재승격이 실패해도 결과는 `halted`이고 쓰기는 붙잡힌 채다.
+
+테스트(`pkg/engine/cold_test.go`, 가짜 토폴로지):
+
+- 정상: prepare에서 앱 0개 → 승격 뒤 늘림 → 스모크 → 전환
+- start-target 실패 → `rolled_back`: ready 시간 초과, 스모크 실패(500), 스모크 연결 실패, 스케일 거부, 쓰기 보류가 이미 `maxDowntime` 초과(앱을 띄우지 않음)
+- 원복 실패 → `halted`, 쓰기 보류 유지: 대상 강등 거부, 대상 강등 토큰 없음, 원복 중 앱 정지 실패, 원본 settle 실패
+- start-target 뒤 실패(cutover) → 기존대로 `halted`, 대상 강등 안 함
+- 원복 가드를 끄면 원복 테스트와 가드 조건 테스트가 실패하는 것을 확인함
+
+남은 것과 확인하지 않은 것:
+
+- platform: `cold` Plan에 카나리 거부, 콘솔에 `start-target` 단계 표시. 엔진 버전 올림과 함께 한다
+- infra: 엔진 계정(`hopcharlie-migrator`)에 대상 네임스페이스 Deployment/StatefulSet patch 권한
+- 실제 EKS(CNPG 1.30.1) e2e, 2026-11-06(`docs/test-records`): 기동 때 DDL을 실행하는 앱으로 정상 전환(쓰기 대기 12.4초, start-target 3.1초)과 start-target 실패 시 원복(`rolled_back`, 원복 10.5초, 응답한 쓰기 누락 0)을 확인했다. 클러스터 사이 cold 전환은 아직이다
+- 쓰기 대기(settle + `startTimeout` + 원복)가 게이트웨이 최대 보류(55초)를 넘으면 그동안의 사용자 쓰기가 503으로 끝난다(원복 회차 59.8초, 1건). `startTimeout`은 이 여유 안에서 잡아야 한다. 엔진이 최대 보류 값을 받아 검증하는 것은 후속 과제다

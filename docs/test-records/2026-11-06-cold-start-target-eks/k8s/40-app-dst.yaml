@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: app-dst, namespace: cold-test, labels: {app: app-dst}}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: app-dst}}
+  template:
+    metadata: {labels: {app: app-dst}}
+    spec:
+      terminationGracePeriodSeconds: 5
+      containers:
+        - name: app
+          # goose Up on every start, no switch to turn it off (ADR 0012's target case).
+          image: 525091405886.dkr.ecr.ap-northeast-2.amazonaws.com/hopcharlie/platform@sha256:cb6dfb0e1921d11d7e52623176297f8009a3fd573d17352473781a3d3a0c444d
+          env:
+            - {name: APP_ENV, value: "dst"}
+            - name: DB_PASSWORD
+              valueFrom: {secretKeyRef: {name: cold-src-app, key: password}}
+            - {name: DATABASE_URL, value: "postgres://app:$(DB_PASSWORD)@cold-dst-rw.cold-test.svc:5432/app?sslmode=require&connect_timeout=3"}
+          ports: [{containerPort: 8080}]
+          readinessProbe: {httpGet: {path: /healthz, port: 8080}, periodSeconds: 2, failureThreshold: 1}
+          resources: {requests: {cpu: 20m, memory: 32Mi}, limits: {memory: 128Mi}}
+          securityContext: {runAsNonRoot: true, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: app-dst, namespace: cold-test}
+spec:
+  selector: {app: app-dst}
+  ports: [{port: 8080, targetPort: 8080}]

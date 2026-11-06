@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"time"
 
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/cnpg"
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/files"
+	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/kube"
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/pg"
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/plan"
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/verify"
@@ -49,6 +52,52 @@ type Verifier interface {
 	FenceGate(ctx context.Context, src, dst Database) ([]verify.TableResult, bool, error)
 	// Report runs the post-cutover checks.
 	Report(ctx context.Context, src, dst Database) (*Report, error)
+}
+
+// App is the target app workload of a cold plan (ADR 0012): a Deployment or
+// StatefulSet in target.namespace (kubeApp).
+type App interface {
+	// Stop scales it to zero.
+	Stop(ctx context.Context) error
+	// Scale sets its replicas.
+	Scale(ctx context.Context, n int64) error
+	// Ready is the number of ready pods for the current spec.
+	Ready(ctx context.Context) (int64, error)
+	// Running counts its pods that still exist, terminating ones included.
+	Running(ctx context.Context) (int64, error)
+}
+
+// Prober sends one smoke request and returns the HTTP status (httpProber).
+type Prober interface {
+	Probe(ctx context.Context, method, url string) (int, error)
+}
+
+type kubeApp struct {
+	inv *kube.Inventory
+	res kube.Resource
+}
+
+func (a kubeApp) Stop(ctx context.Context) error           { return a.inv.Stop(ctx, a.res) }
+func (a kubeApp) Scale(ctx context.Context, n int64) error { return a.inv.Scale(ctx, a.res, n) }
+func (a kubeApp) Ready(ctx context.Context) (int64, error) { return a.inv.Ready(ctx, a.res) }
+func (a kubeApp) Running(ctx context.Context) (int64, error) {
+	return a.inv.Running(ctx, a.res)
+}
+
+type httpProber struct{ client *http.Client }
+
+func (p httpProber) Probe(ctx context.Context, method, url string) (int, error) {
+	req, err := http.NewRequestWithContext(ctx, method, url, nil)
+	if err != nil {
+		return 0, err
+	}
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	return resp.StatusCode, nil
 }
 
 func connectPG(ctx context.Context, dsn string) (Database, error) {

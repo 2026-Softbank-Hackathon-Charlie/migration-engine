@@ -1,0 +1,10 @@
+{"time":"2026-11-06T00:17:49.016458915Z","level":"INFO","msg":"gateway listening","listen":"127.0.0.1:8000","adminAddr":"127.0.0.1:9901","auth":false,"backends":["src=http://app-src.cold-test.svc:8080","dst=http://app-dst.cold-test.svc:8080"],"stateFile":"/work/gateway-state.json","appDomain":"","defaultApp":"app"}
+{"time":"2026-11-06T00:18:27.247701868Z","level":"INFO","msg":"admin action","action":"hold","changed":true,"hold":1,"result":"ok","inFlightAtHold":0,"drainMillis":2}
+{"time":"2026-11-06T00:18:28.017753483Z","level":"WARN","msg":"backend unhealthy","backend":"dst","err":"Get \"http://app-dst.cold-test.svc:8080/healthz\": context deadline exceeded (Client.Timeout exceeded while awaiting headers)"}
+{"time":"2026-11-06T00:18:39.640696507Z","level":"INFO","msg":"admin action","action":"route","backend":"dst","previous":"src","writesHeld":true}
+{"time":"2026-11-06T00:18:39.643364776Z","level":"INFO","msg":"admin action","action":"release","changed":true,"backend":"dst","released":1,"heldMillis":12395,"dispatchMillis":2}
+{"time":"2026-11-06T00:18:41.02193279Z","level":"INFO","msg":"backend healthy","backend":"dst"}
+{"time":"2026-11-06T00:23:03.670506491Z","level":"INFO","msg":"admin action","action":"hold","changed":true,"hold":2,"result":"ok","inFlightAtHold":0,"drainMillis":2}
+{"time":"2026-11-06T00:23:04.017601166Z","level":"WARN","msg":"backend unhealthy","backend":"src","err":"Get \"http://app-src.cold-test.svc:8080/healthz\": context deadline exceeded (Client.Timeout exceeded while awaiting headers)"}
+{"time":"2026-11-06T00:24:03.441836784Z","level":"INFO","msg":"admin action","action":"route","backend":"dst","previous":"dst","writesHeld":true}
+{"time":"2026-11-06T00:24:03.444275482Z","level":"INFO","msg":"admin action","action":"release","changed":true,"backend":"dst","released":1,"heldMillis":59774,"dispatchMillis":2}

@@ -528,9 +528,19 @@ func TestResumeSkipsSucceededSteps(t *testing.T) {
 	if err := second.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
-	skipped := h.kinds(EventStepSkipped)
-	if len(skipped) != 3 {
-		t.Fatalf("skipped %d steps, want 3", len(skipped))
+	var resumed, warm int
+	for _, ev := range h.kinds(EventStepSkipped) {
+		switch {
+		case ev.Message == "already succeeded":
+			resumed++
+		case ev.Step == StepStartTarget:
+			warm++
+		default:
+			t.Errorf("unexpected skip: %+v", ev)
+		}
+	}
+	if resumed != 3 || warm != 1 {
+		t.Fatalf("skipped %d succeeded steps (want 3) and start-target %d times (want 1 in warm mode)", resumed, warm)
 	}
 	if second.State().Outcome != OutcomeSucceeded {
 		t.Fatal(second.State().Outcome)

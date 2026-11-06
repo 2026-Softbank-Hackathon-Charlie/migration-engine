@@ -1,0 +1,33 @@
+engine start 00:23:02
+run cold-dst-to-src-20261106-002302 (state: .hopcharlie/runs/cold-dst-to-src-20261106-002302.json)
+00:23:02.463 ▶ precheck
+00:23:02.539 ✔ precheck (75 ms)
+00:23:02.539 ▶ prepare
+00:23:03.658 ✔ prepare (1119 ms)
+00:23:03.658 ▶ presync
+00:23:03.665   presync replication lag lagBytes=0 sourceLsn=0/70AD100 targetLsn=0/70AD100
+00:23:03.665 ✔ presync (6 ms)
+00:23:03.665 ▶ delta
+00:23:03.667   delta replication lag lagBytes=0 sourceLsn=0/70AD200 targetLsn=0/70AD200
+00:23:03.667 ✔ delta (2 ms)
+00:23:03.667 ▶ fence
+00:23:03.670   fence writes held at gateway 
+00:23:03.672 ✔ fence (4 ms)
+00:23:03.672 ▶ switchover
+00:23:03.699   switchover fence gate passed tables=3
+00:23:03.754   switchover source demotion requested newPrimary=cold-src
+00:23:05.794   switchover target promotion requested oldPrimary=cold-dst
+00:23:12.964 ✔ switchover (9292 ms)
+00:23:12.964 ▶ start-target
+00:23:12.978   start-target target app scaled up replicas=2
+00:23:52.965 ✘ start-target: target app has 0 of 2 ready pods after 40s (last error: <nil>)
+00:23:52.965 ! start-target [rollback] target app did not start; demoting the promoted target while the gateway still holds every write 
+00:23:54.022   start-target target app stopped 
+00:23:54.092   start-target target demotion requested newPrimary=cold-dst
+00:23:56.179   start-target re-promoting source primary=cold-dst
+00:24:03.417   start-target source settled settleMillis=6211
+00:24:03.439   start-target replication lag lagBytes=0 sourceLsn=0/B0000A0 targetLsn=0/B0000A0
+00:24:03.444 ! start-target [rollback] rolled back; source is primary and serving traffic 
+error: rolled back after start-target: target app has 0 of 2 ready pods after 40s (last error: <nil>)
+engine exit=1 00:24:03
+DONE

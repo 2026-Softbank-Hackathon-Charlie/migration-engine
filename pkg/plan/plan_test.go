@@ -77,3 +77,53 @@ func TestDecommissionValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestTargetAppModes(t *testing.T) {
+	base := `{"id":"p","source":{"env":"a","namespace":"n","cluster":"c1","dsn":"x"},
+	  "target":{"env":"b","namespace":"n","cluster":"c2","dsn":"y","app":%s},
+	  "gateway":{"mode":%q,"url":"http://gw:9901"}}`
+	cold := `{"mode":"cold","kind":"Deployment","name":"web","replicas":2,
+	  "smokeUrl":"http://web.n.svc:8080","smoke":[{"method":"GET","path":"/healthz"}]}`
+
+	p, err := Parse([]byte(fmt.Sprintf(base, `{}`, "http")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Target.App.Mode != AppWarm || p.Target.App.Cold() {
+		t.Errorf("empty app should default to warm: %+v", p.Target.App)
+	}
+	p, err = Parse([]byte(fmt.Sprintf(base, cold, "http")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.Target.App.Cold() || p.Target.App.StartTimeout.Duration != 3*time.Minute {
+		t.Errorf("cold defaults: %+v", p.Target.App)
+	}
+	var none *AppSpec
+	if none.Cold() {
+		t.Error("nil app must not be cold")
+	}
+
+	bad := map[string][2]string{
+		"unknown mode":     {`{"mode":"lukewarm"}`, "http"},
+		"cold without gw":  {cold, "none"},
+		"bad kind":         {strings.Replace(cold, "Deployment", "CronJob", 1), "http"},
+		"no name":          {strings.Replace(cold, `"name":"web",`, "", 1), "http"},
+		"zero replicas":    {strings.Replace(cold, `"replicas":2`, `"replicas":0`, 1), "http"},
+		"bad smoke url":    {strings.Replace(cold, "http://web.n.svc:8080", "web:8080", 1), "http"},
+		"no smoke":         {strings.Replace(cold, `[{"method":"GET","path":"/healthz"}]`, `[]`, 1), "http"},
+		"write smoke":      {strings.Replace(cold, `"GET"`, `"POST"`, 1), "http"},
+		"relative path":    {strings.Replace(cold, `"/healthz"`, `"healthz"`, 1), "http"},
+		"timeout too long": {strings.Replace(cold, `"replicas":2`, `"replicas":2,"startTimeout":"1h"`, 1), "http"},
+	}
+	for name, c := range bad {
+		if _, err := Parse([]byte(fmt.Sprintf(base, c[0], c[1]))); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	src := `{"id":"p","source":{"env":"a","namespace":"n","cluster":"c1","dsn":"x","app":{}},
+	  "target":{"env":"b","namespace":"n","cluster":"c2","dsn":"y"}}`
+	if _, err := Parse([]byte(src)); err == nil {
+		t.Error("source.app accepted")
+	}
+}

@@ -1,0 +1,13 @@
+{
+  "id": "cold-dst-to-src",
+  "source": {"env": "dst", "namespace": "cold-test", "cluster": "cold-dst",
+    "dsn": "postgres://app:${PGPW}@cold-dst-rw.cold-test.svc:5432/app?sslmode=require"},
+  "target": {"env": "src", "namespace": "cold-test", "cluster": "cold-src",
+    "dsn": "postgres://app:${PGPW}@cold-src-rw.cold-test.svc:5432/app?sslmode=require",
+    "app": {"mode": "cold", "kind": "Deployment", "name": "app-src", "replicas": 2, "startTimeout": "40s",
+      "smokeUrl": "http://app-src.cold-test.svc:8080",
+      "smoke": [{"method": "GET", "path": "/healthz"}, {"method": "GET", "path": "/"}]}},
+  "gateway": {"mode": "http", "url": "http://127.0.0.1:9901"},
+  "verify": {"schemas": ["public"], "fenceGate": true},
+  "thresholds": {"maxLagBytes": 1048576, "catchupTimeout": "5m", "switchoverTimeout": "3m", "maxDowntime": "3m"}
+}

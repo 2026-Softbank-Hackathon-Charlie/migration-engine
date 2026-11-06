@@ -156,3 +156,48 @@ func TestRunningCountsTerminatingPods(t *testing.T) {
 		t.Fatalf("running = %d, %v; want 1 (the terminating pod)", n, err)
 	}
 }
+
+func TestScaleClearsStopAnnotationAndReadyWaitsForObservedGeneration(t *testing.T) {
+	ctx := context.Background()
+	d := obj("apps/v1", "Deployment", "web", app, map[string]any{"replicas": int64(3)})
+	d.SetGeneration(2)
+	d.Object["status"] = map[string]any{"observedGeneration": int64(1), "readyReplicas": int64(3)}
+	inv, dyn := fakeInventory(d)
+	r := Resource{"Deployment", "web"}
+
+	if n, err := inv.Ready(ctx, r); err != nil || n != 0 {
+		t.Fatalf("ready before the status caught up = %d, %v; want 0", n, err)
+	}
+	if err := inv.Stop(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	if err := inv.Scale(ctx, r, 2); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := dyn.Resource(Kinds[0].GVR).Namespace("shop").Get(ctx, "web", metav1.GetOptions{})
+	if n, _, _ := unstructured.NestedInt64(got.Object, "spec", "replicas"); n != 2 {
+		t.Fatalf("replicas after scale = %d", n)
+	}
+	if _, ok := got.GetAnnotations()[AnnReplicas]; ok {
+		t.Error("stop annotation left after scale")
+	}
+	// A later Stop records the scaled count, not the one before the first Stop.
+	if err := inv.Stop(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = dyn.Resource(Kinds[0].GVR).Namespace("shop").Get(ctx, "web", metav1.GetOptions{})
+	if got.GetAnnotations()[AnnReplicas] != "2" {
+		t.Fatalf("annotation after second stop = %v", got.GetAnnotations())
+	}
+
+	got.Object["status"] = map[string]any{"observedGeneration": got.GetGeneration(), "readyReplicas": int64(2)}
+	if _, err := dyn.Resource(Kinds[0].GVR).Namespace("shop").Update(ctx, got, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := inv.Ready(ctx, r); err != nil || n != 2 {
+		t.Fatalf("ready = %d, %v; want 2", n, err)
+	}
+	if err := inv.Scale(ctx, Resource{"CronJob", "report"}, 1); err == nil {
+		t.Error("scaling a CronJob accepted")
+	}
+}

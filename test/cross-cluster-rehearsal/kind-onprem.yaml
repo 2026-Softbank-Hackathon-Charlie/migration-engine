@@ -1,0 +1,8 @@
+# "On-prem" side of the cross-cluster rehearsal (hoponprem-control-plane).
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: hoponprem
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - { containerPort: 30433, hostPort: 55563, listenAddress: "127.0.0.1" }

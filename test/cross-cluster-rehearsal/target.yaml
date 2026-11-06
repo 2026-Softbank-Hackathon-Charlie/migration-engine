@@ -1,0 +1,33 @@
+# Target standby in the "on-prem" cluster: pg_basebackup and streaming from
+# the source across clusters, through the source node's NodePort.
+apiVersion: v1
+kind: Service
+metadata: {name: pg-dst-host, namespace: hop}
+spec:
+  type: NodePort
+  selector: {cnpg.io/cluster: pg-dst}
+  ports: [{port: 5432, targetPort: 5432, nodePort: 30433}]
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata: {name: pg-dst, namespace: hop}
+spec:
+  instances: 1
+  smartShutdownTimeout: 1
+  storage: {size: 1Gi}
+  certificates:
+    serverAltDNSNames: [hoponprem-control-plane]
+  bootstrap:
+    pg_basebackup: {source: pg-src, database: app, owner: app, secret: {name: pg-src-app}}
+  replica: {self: pg-dst, primary: pg-src, source: pg-src}
+  externalClusters:
+    - name: pg-src
+      connectionParameters: {host: hopcloud-control-plane, port: "30432", user: streaming_replica, dbname: postgres, sslmode: verify-full}
+      sslKey: {name: pg-src-replication, key: tls.key}
+      sslCert: {name: pg-src-replication, key: tls.crt}
+      sslRootCert: {name: pg-src-ca, key: ca.crt}
+    - name: pg-dst
+      connectionParameters: {host: pg-dst-rw.hop.svc, user: streaming_replica, dbname: postgres, sslmode: verify-full}
+      sslKey: {name: pg-dst-replication, key: tls.key}
+      sslCert: {name: pg-dst-replication, key: tls.crt}
+      sslRootCert: {name: pg-dst-ca, key: ca.crt}

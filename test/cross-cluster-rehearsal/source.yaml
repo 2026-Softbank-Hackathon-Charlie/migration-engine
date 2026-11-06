@@ -1,0 +1,22 @@
+# Source primary in the "cloud" cluster. The replica topology is patched in
+# after the target exists (source-patch.json), as in the production run.
+apiVersion: v1
+kind: Service
+metadata: {name: pg-src-host, namespace: hop}
+spec:
+  type: NodePort
+  selector: {cnpg.io/cluster: pg-src}
+  ports: [{port: 5432, targetPort: 5432, nodePort: 30432}]
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata: {name: pg-src, namespace: hop}
+spec:
+  instances: 1
+  smartShutdownTimeout: 1
+  storage: {size: 1Gi}
+  certificates:
+    # the other cluster connects with verify-full through this node name
+    serverAltDNSNames: [hopcloud-control-plane]
+  bootstrap:
+    initdb: {database: app, owner: app}

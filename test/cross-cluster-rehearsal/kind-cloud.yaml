@@ -1,0 +1,9 @@
+# "Cloud" side of the cross-cluster rehearsal. Its node is reached by the other
+# cluster as hopcloud-control-plane on the shared docker network "kind".
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: hopcloud
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - { containerPort: 30432, hostPort: 55562, listenAddress: "127.0.0.1" }

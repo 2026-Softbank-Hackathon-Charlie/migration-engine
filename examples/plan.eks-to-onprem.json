@@ -1,0 +1,15 @@
+{
+  "id": "moimroom-eks-to-onprem",
+  "source": {"env": "eks", "namespace": "moimroom", "cluster": "moimroom-db",
+    "context": "eks-hopcharlie",
+    "dsn": "postgres://app:${MOIMROOM_PGPASSWORD}@db-eks.hopcharlie-db-network.svc.cluster.local:5432/app?sslmode=require"},
+  "target": {"env": "onprem", "namespace": "moimroom", "cluster": "moimroom-db-onprem",
+    "context": "onprem-hopcharlie",
+    "dsn": "postgres://app:${MOIMROOM_PGPASSWORD}@db-onprem.hopcharlie-db-network.svc.cluster.local:5432/app?sslmode=require",
+    "manifest": "examples/cnpg/target-onprem.yaml"},
+  "files": {"source": "src:hopcharlie-eks-moimroom", "target": "dst:moimroom-onprem"},
+  "gateway": {"mode": "http", "url": "http://hopcharlie-gateway.charlie-platform.svc:9901/apps/moimroom", "token": "${GATEWAY_TOKEN}",
+    "sourceBackend": "eks", "targetBackend": "onprem"},
+  "verify": {"schemas": ["app"], "fenceGate": true},
+  "thresholds": {"maxLagBytes": 1048576, "catchupTimeout": "10m", "switchoverTimeout": "3m", "maxDowntime": "3m"}
+}

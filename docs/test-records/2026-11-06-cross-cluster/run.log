@@ -1,0 +1,69 @@
+syntax-ok
+== setup (work dir C:/Users/SSAFY/AppData/Local/Temp/claude/C--Users-SSAFY-Downloads-softbank/d60a5f00-7cdd-4424-acf5-f835e4858765/scratchpad/xc-run1, CNPG 1.30.1, engine 5913052)
+Creating cluster "hopcloud" ...
+Set kubectl context to "kind-hopcloud"
+Set kubectl context to "kind-hopcloud"
+Creating cluster "hoponprem" ...
+Set kubectl context to "kind-hoponprem"
+Set kubectl context to "kind-hoponprem"
+== envcheck (ADR 0014) on both clusters
+   envcheck context "kind-hopcloud" namespace "hop"
+     pass  kube-api                       server v1.32.2
+     pass  namespace                      "hop" exists
+     pass  storage-class                  default standard (rancher.io/local-path)
+     pass  cnpg-crd                       installed; no Cluster in "hop" yet
+     pass  cnpg-operator                  cnpg-system/cnpg-controller-manager runs 1.30.1 (same as the other environments)
+     pass  permission get clusters        allowed
+     pass  permission create clusters     allowed
+     pass  permission patch clusters      allowed
+     pass  permission get secrets         allowed
+     pass  permission create secrets      allowed
+     pass  permission get services        allowed
+     pass  permission list pods           allowed
+     pass  permission create subjectaccessreviews allowed
+     skip  postgres                       no -dsn
+     skip  prometheus                     no -prometheus
+     skip  minio                          no -minio
+   envcheck context "kind-hoponprem" namespace "hop"
+     pass  kube-api                       server v1.32.2
+     pass  namespace                      "hop" exists
+     pass  storage-class                  default standard (rancher.io/local-path)
+     pass  cnpg-crd                       installed; no Cluster in "hop" yet
+     pass  cnpg-operator                  cnpg-system/cnpg-controller-manager runs 1.30.1 (same as the other environments)
+     pass  permission get clusters        allowed
+     pass  permission create clusters     allowed
+     pass  permission patch clusters      allowed
+     pass  permission get secrets         allowed
+     pass  permission create secrets      allowed
+     pass  permission get services        allowed
+     pass  permission list pods           allowed
+     pass  permission create subjectaccessreviews allowed
+     skip  postgres                       no -dsn
+     skip  prometheus                     no -prometheus
+     skip  minio                          no -minio
+== source pg-src on hopcloud
+== copy source Secrets to hoponprem
+   copied pg-src-ca (ca.crt only)
+   copied pg-src-replication
+   copied pg-src-app
+== target pg-dst on hoponprem (pg_basebackup across clusters)
+   healthy after 72s; wal receiver: streaming
+== copy target Secrets to hopcloud, patch the source's replica topology
+   copied pg-dst-ca (ca.crt only)
+   copied pg-dst-replication
+== 1. cloud -> on-prem
+   12:30:27.812   switchover target writable afterPromotionMillis=1029
+   12:30:34.128   switchover target settled inRecovery=0 lastBlockedMillis=5277 notHealthy=10 pendingRestart=1 polls=13 restarts=1 settleMillis=6316 unobserved=1
+   12:30:34.133   cutover write downtime downtimeMillis=8432
+   12:30:34.206 ★ migration succeeded downtimeMillis=8432
+   OK   outcome=succeeded
+   OK   primary=pg-dst(f) replica=pg-src(t, streaming from hoponprem-control-plane) write-replicated-across-clusters=1
+== 2. on-prem -> cloud
+   12:30:52.510   switchover target writable afterPromotionMillis=11561
+   12:30:58.783   switchover target settled inRecovery=0 lastBlockedMillis=5234 notHealthy=10 pendingRestart=0 polls=13 restarts=1 settleMillis=6273 unobserved=1
+   12:30:58.788   cutover write downtime downtimeMillis=18925
+   12:30:58.855 ★ migration succeeded downtimeMillis=18925
+   OK   outcome=succeeded
+   OK   primary=pg-src(f) replica=pg-dst(t, streaming from hopcloud-control-plane) write-replicated-across-clusters=1
+== all scenarios passed
+[exited with code 0]

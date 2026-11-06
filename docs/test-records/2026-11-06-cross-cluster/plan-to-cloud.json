@@ -1,0 +1,10 @@
+{
+  "id": "xc-onprem-to-cloud",
+  "source": {"env": "dst", "kubeconfig": "<work>/onprem.kubeconfig", "context": "kind-hoponprem", "namespace": "hop", "cluster": "pg-dst",
+             "dsn": "postgres://***@127.0.0.1:55563/app?sslmode=require"},
+  "target": {"env": "src", "kubeconfig": "<work>/cloud.kubeconfig", "context": "kind-hopcloud", "namespace": "hop", "cluster": "pg-src",
+             "dsn": "postgres://***@127.0.0.1:55562/app?sslmode=require"},
+  "gateway": {"mode": "none"},
+  "verify": {"schemas": ["public"], "fenceGate": true},
+  "thresholds": {"maxLagBytes": 1048576, "catchupTimeout": "10m", "switchoverTimeout": "3m", "maxDowntime": "3m"}
+}

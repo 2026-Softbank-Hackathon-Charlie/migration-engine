@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -384,6 +385,31 @@ func TestSettleSeesASilentRestart(t *testing.T) {
 	if rep := e.State().Steps[StepSwitchover].Evidence["settle"].(SettleReport); rep.Restarts != 1 {
 		t.Fatalf("restarts %d, want 1 (%+v)", rep.Restarts, rep)
 	}
+}
+
+func TestSettleRequiresFreshObservationAfterDroppedConnections(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newHarness(t)
+		h.w.dstDB.recovery = false
+		e := h.engine(t, "")
+		connects := 0
+		e.connect = func(ctx context.Context, dsn string) (Database, error) {
+			connects++
+			if connects > 2 {
+				return nil, errors.New("connection reset by peer")
+			}
+			return h.w.connect(ctx, dsn)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*settleMin)
+		defer cancel()
+		rep, err := e.waitSettled(ctx, e.dst, h.p.Target.DSN, &e.dstDB)
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("settle after two good reads then persistent connection errors: %v; report %+v", err, rep)
+		}
+		if h.w.dstDB.pmCalls != 2 || rep.Unobserved == 0 {
+			t.Fatalf("want two observed samples followed by unobserved polls: reads=%d report=%+v", h.w.dstDB.pmCalls, rep)
+		}
+	})
 }
 
 // A run that halted because the promoted target did not settle in time (the

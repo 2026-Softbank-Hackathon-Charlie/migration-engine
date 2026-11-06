@@ -720,7 +720,7 @@ func (e *Engine) waitSettled(ctx context.Context, c Cluster, dsn string, slot *D
 		default:
 			stable++
 		}
-		if stable >= 2 && time.Since(start) >= settleMin {
+		if err == nil && s.settled() && stable >= 2 && time.Since(start) >= settleMin {
 			return rep, nil
 		}
 		select {

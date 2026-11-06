@@ -1,0 +1,6 @@
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/probes	1.807s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/paritygate	1.743s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/envs	2.819s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/cmd/api	7.949s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/plans	1.354s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/api	62.526s

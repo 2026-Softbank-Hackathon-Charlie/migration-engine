@@ -1,0 +1,9 @@
+--- FAIL: TestSecretsMetadataAndFailures (0.04s)
+    --- FAIL: TestSecretsMetadataAndFailures/exists (0.01s)
+        resources_test.go:97: {Capability:secret Target:{Environment:onprem Namespace:shop Application:shop} Status:unknown Code:resource_checks_incomplete ObservedAt:2026-11-06 05:02:14.4343875 +0000 UTC Checks:[{ID:runtime Status:unknown Code:resource_unavailable Evidence:} {ID:secret-usability Status:unknown Code:secret_usability_not_verified Evidence:}]} <nil>
+FAIL
+FAIL	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/probes	0.294s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/paritygate	0.432s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/envs	0.438s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/cmd/api	0.497s
+FAIL

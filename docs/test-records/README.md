@@ -6,6 +6,7 @@
 | 날짜 | 테스트 | 결과 | 자세히 |
 |---|---|---|---|
 | 2026-11-06 | platform 파일 본문 레지던시 검사·staging 전송 | gofmt·전체 build/vet·LF 전체 test·관련 race·실제 로컬 rclone 통과, fileguard coverage 81.3%. 최초 차단·CRLF apidoc 실패·원본 커밋에서도 재현한 배포 순서 간헐 실패 보존. 운영 이전 미검증 | [기록](2026-11-06-file-content-inspection.md) |
+| 2026-11-06 | platform Secret·감사 수집기·Barman 백업 동등성 부분 증거 | 최종 LF 전체 test·race·vet 통과. 최초 apidoc 실패와 main 재배포 테스트 간헐 실패는 상세 기록에 보존 | [기록](2026-11-06-parity-resources.md) |
 | 2026-11-04 | platform PG 메이저 버전 게이트 (단위·API·실DB) | 통과 | [아래](#2026-11-04-platform-pg-메이저-버전-게이트) |
 | 2026-11-04 | 로컬 kind 이전 리허설 (엔진 왕복·원복) | 4/4 통과 | [아래](#2026-11-04-로컬-kind-이전-리허설) |
 | 2026-11-04 | 운영 클러스터 상태 확인 (샘플 앱, 엔진 위치) | 조회만 | [아래](#2026-11-04-운영-클러스터-상태-확인-조회만) |

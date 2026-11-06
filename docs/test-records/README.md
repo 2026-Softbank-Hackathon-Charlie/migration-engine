@@ -21,6 +21,7 @@
 | 2026-11-06 | cold 모드(ADR 0012) 실제 EKS e2e: 기동 때 DDL을 실행하는 앱, 부하 중 | 문제 재현(replica에서 기동 실패) 확인. **정상 전환 성공, 쓰기 대기 12.4초, 실패 0, 누락 0**. **실패 주입 → 승격 되돌림 `rolled_back` 성공**, 누락 0, 쓰기 대기 59.8초(503 1건) | [아래](#2026-11-06-cold-모드-실제-eks-e2e) |
 | 2026-11-06 | 쓰기 정지 구간 계측과 smartShutdownTimeout 5초 대 1초 (kind, 부하 중) | 1초에서 정지 13초 → 8.4초, 4회 모두 실패·누락 0 | [아래](#2026-11-06-쓰기-정지-시간-구간별-실측과-단축) |
 | 2026-11-06 | 엔진 halt 재개·안정 확인·준비 재시도 단위 테스트, platform lost-response e2e | 통과 (platform 나머지 e2e는 고정된 엔진 버전의 접속 재시도 부재로 1회 실패) | [아래](#2026-11-06-halt-재개-연결-끊김-재시도-멱등) |
+| 2026-11-06 | 온프렘 준비: envcheck 실제 실행, 온프렘 manifest 스키마 확인, **클러스터 두 개 사이 이전·역이전** (kind) | 통과. 클러스터 경계를 넘는 복제·Secret 복사·verify-full 확인, 쓰기 정지 8.4초 / 18.9초 | [아래](#2026-11-06-온프렘-준비와-클러스터-간-이전-리허설) |
 
 ---
 
@@ -584,3 +585,27 @@ platform e2e(worktree `.wt-platform-retry`, 브랜치 `feat/retry-safe-writes`, 
 | 2 | canary-fault | 실패: prepare에서 대상 DB 첫 접속 `tls error: EOF` 한 번으로 run failed. platform이 고정한 엔진에는 접속 재시도가 없음 → 엔진에 재시도 추가(`TestPrepareRetriesTargetConnection`) |
 
 - 검증하지 않은 것: 엔진 수정이 들어간 platform으로 나머지 e2e(canary-fault, observe-rollback, migrate) 재실행은 platform이 엔진을 올린 뒤. 실제 클라우드에서 `-resume-halted` 사용
+
+## 2026-11-06 온프렘 준비와 클러스터 간 이전 리허설
+
+- 대상: migration-engine 브랜치 `feat/onprem-readiness`(main `5913052` 기반, 미커밋 변경 포함) — `hopmigrate envcheck`(ADR 0014), `examples/cnpg/target-onprem.yaml`, `docs/onprem.md`, `test/cross-cluster-rehearsal`
+- 원시 자료(비밀번호 가림): [2026-11-06-cross-cluster/](2026-11-06-cross-cluster/)
+
+envcheck 실제 실행(kind `hopgw`, CNPG 1.30.1):
+- 정상: kube-api, namespace, storage-class(기본 `standard`, local-path), cnpg-crd(pg-src·pg-dst 이미지 표시), cnpg-operator 1.30.1 일치, 권한 8개 allowed, postgres(18.6 primary) 모두 pass, exit 0
+- 일부러 틀린 입력: 없는 네임스페이스 fail, operator 버전 1.29.0 기대 → warn, `-pg-major 17` → fail(18과 다름), 닿지 않는 MinIO → fail, exit 1
+- 단위 테스트(가짜 클라이언트): 준비된 k3s(`v1.33.5+k3s1`), CNPG 없음·권한 거부·DB 접속 실패(비밀번호가 보고서에 안 남음), StorageClass 없음, API 불통(나머지 중단)
+
+온프렘 manifest: `examples/cnpg/target-onprem.yaml`을 같은 kind의 CNPG 1.30.1에 server dry-run → 스키마 통과. `examples/plan.eks-to-onprem.json` → `hopmigrate validate` 통과
+
+클러스터 간 이전 리허설(`test/cross-cluster-rehearsal/run.sh`):
+- 환경: kind 두 개 `hopcloud`(원본), `hoponprem`(대상), 둘 다 CNPG 1.30.1, PG 18.6, 인스턴스 1, smartShutdownTimeout 1. 서로의 DB는 docker 네트워크의 노드 이름과 NodePort로, `sslmode=verify-full`(certificates.serverAltDNSNames)
+- 순서(11/05 운영 EKS → GKE와 같음): 원본 생성 → 원본 CA(인증서만)·복제 인증서·app Secret을 대상 클러스터로 복사 → 대상 생성(클러스터 간 pg_basebackup, 72초 뒤 healthy·streaming) → 대상 CA·복제 인증서를 원본 클러스터로 복사 → 원본 replica 토폴로지 패치 → 엔진
+
+| # | 시나리오 | 결과 | 쓰기 정지 | 끝난 뒤 |
+|---|---|---|---|---|
+| 1 | cloud → on-prem | succeeded | 8.4초 (승격→쓰기 가능 1.0초, 안정 6.3초) | primary pg-dst(onprem), pg-src replica `streaming from hoponprem-control-plane`, 쓰기가 클러스터를 넘어 복제됨 |
+| 2 | on-prem → cloud | succeeded | **18.9초** (승격→쓰기 가능 **11.6초**, 안정 6.3초) | primary pg-src(cloud), pg-dst replica `streaming from hopcloud-control-plane`, 쓰기 복제됨 |
+
+- 관찰: 2번의 승격 → 쓰기 가능이 1번보다 10초 길었다. 원인은 조사하지 않음(18초 전에 강등된 클러스터를 바로 다시 승격한 영향인지 확인 필요)
+- 검증하지 않은 것: 실제 k3s(이번은 kind 두 개), Tailscale 경로, 게이트웨이와 부하(gateway none), 파일 이전, 다른 네트워크 지연이 있는 실제 온프렘

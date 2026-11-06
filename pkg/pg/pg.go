@@ -76,6 +76,13 @@ func (d *DB) PendingRestart(ctx context.Context) (bool, error) {
 	return b, err
 }
 
+// ServerVersionNum is server_version_num: major*10000 + minor.
+func (d *DB) ServerVersionNum(ctx context.Context) (int, error) {
+	var n int
+	err := d.Pool.QueryRow(ctx, "SELECT current_setting('server_version_num')::int").Scan(&n)
+	return n, err
+}
+
 // PostmasterStart is when the server process started. It changes on every
 // restart, so two reads that agree prove no restart happened between them,
 // even if connections failed in between.

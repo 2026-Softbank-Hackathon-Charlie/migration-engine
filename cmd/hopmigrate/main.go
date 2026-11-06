@@ -6,6 +6,7 @@
 //	hopmigrate step     -plan plan.json -run RUN_ID -step NAME [-json]
 //	hopmigrate verify   -plan plan.json [-json]
 //	hopmigrate show     -run RUN_ID [-state-dir DIR]
+//	hopmigrate envcheck -context CTX -namespace NS [-cnpg-version V] [-dsn DSN -pg-major N] [-prometheus URL] [-minio URL] [-json]
 //	hopmigrate decommission -plan plan.json -run RUN_ID [-undo] [-json]
 package main
 
@@ -25,6 +26,7 @@ import (
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/cnpg"
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/decommission"
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/engine"
+	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/envcheck"
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/files"
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/kube"
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/pg"
@@ -40,6 +42,9 @@ Commands:
   step      Execute one step of an existing run (rehearsal)
   verify    Run the data/file verification report on its own
   show      Print a run's saved state
+  envcheck  Check that a cluster can be a migration source or target (no plan
+            needed): API, namespace, StorageClass, CNPG, permissions, and
+            optionally the database, Prometheus and MinIO (ADR 0014)
   decommission  After a succeeded run: stop the old app, prove nothing uses the
             source, block it, smoke-test, and report what is left (-undo puts it back)
 
@@ -73,6 +78,8 @@ func main() {
 		err = cmdDecommission(ctx, args)
 	case "show":
 		err = cmdShow(args)
+	case "envcheck":
+		err = cmdEnvcheck(ctx, args)
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 		return
@@ -183,6 +190,47 @@ func cmdRun(ctx context.Context, args []string) error {
 		}
 	}
 	return e.Run(ctx)
+}
+
+func cmdEnvcheck(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("envcheck", flag.ExitOnError)
+	kubeconfig := fs.String("kubeconfig", "", "kubeconfig path (default loading rules)")
+	kctx := fs.String("context", "", "kube context (default: current)")
+	o := envcheck.Options{}
+	fs.StringVar(&o.Namespace, "namespace", "", "namespace the app and its CNPG Cluster use (required)")
+	fs.StringVar(&o.CNPGVersion, "cnpg-version", "", "CNPG operator version the other environments run, e.g. 1.30.1")
+	fs.IntVar(&o.PGMajor, "pg-major", 0, "PostgreSQL major version of the other side (with -dsn)")
+	fs.StringVar(&o.DSN, "dsn", "", "database to connect to from here (${VAR} expanded); checks reachability and version")
+	fs.StringVar(&o.PrometheusURL, "prometheus", "", "Prometheus base URL; must answer /-/ready")
+	fs.StringVar(&o.MinIOURL, "minio", "", "MinIO base URL; must answer /minio/health/live")
+	asJSON := fs.Bool("json", false, "print machine-readable JSON")
+	fs.Parse(args)
+	if o.Namespace == "" {
+		return errors.New("-namespace is required")
+	}
+	o.Context, o.DSN = *kctx, os.ExpandEnv(o.DSN)
+	typed, dyn, err := kube.Clients(*kubeconfig, *kctx)
+	if err != nil {
+		return err
+	}
+	rep := envcheck.Run(ctx, envcheck.Deps{
+		Kube: typed, Dynamic: dyn,
+		Connect: func(ctx context.Context, dsn string) (envcheck.Database, error) { return pg.Connect(ctx, dsn) },
+	}, o)
+	if *asJSON {
+		if err := printJSON(rep); err != nil {
+			return err
+		}
+	} else {
+		fmt.Printf("envcheck context %q namespace %q\n", *kctx, o.Namespace)
+		for _, c := range rep.Checks {
+			fmt.Printf("  %-5s %-30s %s\n", c.Status, c.Name, c.Detail)
+		}
+	}
+	if !rep.OK {
+		return errors.New("envcheck: at least one check failed")
+	}
+	return nil
 }
 
 func cmdStep(ctx context.Context, args []string) error {

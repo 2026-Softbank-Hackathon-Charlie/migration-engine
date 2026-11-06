@@ -1,0 +1,31 @@
+run xc-cloud-to-onprem-20261106-033025 (state: C:\Users\SSAFY\AppData\Local\Temp\claude\C--Users-SSAFY-Downloads-softbank\d60a5f00-7cdd-4424-acf5-f835e4858765\scratchpad\xc-run1\runs\xc-cloud-to-onprem-20261106-033025.json)
+12:30:25.554 ▶ precheck
+12:30:25.613 ✔ precheck (58 ms)
+12:30:25.614 ▶ prepare
+12:30:25.643   prepare WARNING: target cluster runs 1 instance(s): until the old source has streamed them, writes after cutover live on one node only; use instances >= 2 (with synchronous replication) where losing that node is not acceptable 
+12:30:25.645 ✔ prepare (29 ms)
+12:30:25.646 ▶ presync
+12:30:25.652   presync replication lag lagBytes=0 sourceLsn=0/4000060 targetLsn=0/4000060
+12:30:25.653 ✔ presync (6 ms)
+12:30:25.654 ▶ delta
+12:30:25.657   delta replication lag lagBytes=0 sourceLsn=0/4000060 targetLsn=0/4000060
+12:30:25.697 ✔ delta (42 ms)
+12:30:25.699 ▶ fence
+12:30:25.700   fence writes held at gateway 
+12:30:25.702 ✔ fence (4 ms)
+12:30:25.704 ▶ switchover
+12:30:25.737   switchover fence gate passed tables=1
+12:30:25.777   switchover source demotion requested newPrimary=pg-dst
+12:30:26.806   switchover target promotion requested oldPrimary=pg-src
+12:30:27.812   switchover target writable afterPromotionMillis=1029
+12:30:34.128   switchover target settled inRecovery=0 lastBlockedMillis=5277 notHealthy=10 pendingRestart=1 polls=13 restarts=1 settleMillis=6316 unobserved=1
+12:30:34.130 ✔ switchover (8425 ms)
+12:30:34.130 ↷ start-target warm mode: the target app already runs
+12:30:34.131 ▶ cutover
+12:30:34.133   cutover write downtime downtimeMillis=8432
+12:30:34.133 ✔ cutover (2 ms)
+12:30:34.135 ▶ verify
+12:30:34.194 ✔ verify (59 ms)
+12:30:34.195 ▶ finalize
+12:30:34.205 ✔ finalize (8 ms)
+12:30:34.206 ★ migration succeeded downtimeMillis=8432

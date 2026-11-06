@@ -1,0 +1,17 @@
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/fileguard	4.268s
+?   	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight	[no test files]
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/bucketprobe	2.214s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/capacity	0.224s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/gate	0.323s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/inventory	0.048s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/parity	0.031s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/paritygate	0.415s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/pgversion	0.114s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/probes	0.381s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/residency	0.558s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/runs	0.197s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/plans	0.138s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/api	10.196s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/cmd/api	0.538s
+
+Exit code: 0

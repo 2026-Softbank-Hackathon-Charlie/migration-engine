@@ -1,0 +1,90 @@
+PASS: 285 Go/Rego/module files match the tested LF snapshot after line-ending normalization
+Post-test updates were documentation/test records only.
+warning: in the working copy of 'cmd/api/main.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/api/server.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/plans/residency.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/preflight/gate/gate.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/preflight/gate/gate_test.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/preflight/gate/live_minio_test.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/preflight/model.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/preflight/residency/config.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/preflight/residency/evaluator.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/runs/runs.go', LF will be replaced by CRLF the next time Git touches it
+Checked 19 changed/new Go files
+Formatting check PASS: no gofmt differences
+warning: in the working copy of 'cmd/api/main.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/api/server.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/plans/residency.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/preflight/gate/gate.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/preflight/gate/gate_test.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/preflight/gate/live_minio_test.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/preflight/model.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/preflight/residency/config.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/preflight/residency/evaluator.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/runs/runs.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/test-records/README.md', LF will be replaced by CRLF the next time Git touches it
+
+Final verification exit code: 0
+
+Platform status:
+ M cmd/api/main.go
+ M examples/residency-policy.yaml
+ M internal/api/server.go
+ M internal/plans/residency.go
+ M internal/preflight/README.md
+ M internal/preflight/gate/gate.go
+ M internal/preflight/gate/gate_test.go
+ M internal/preflight/gate/live_minio_test.go
+ M internal/preflight/model.go
+ M internal/preflight/residency/config.go
+ M internal/preflight/residency/evaluator.go
+ M internal/preflight/residency/policy.rego
+ M internal/runs/runs.go
+?? docs/adr/0030-file-content-residency.md
+?? internal/api/residency_content_test.go
+?? internal/fileguard/
+?? internal/preflight/gate/content_test.go
+?? internal/preflight/residency/content_test.go
+?? internal/runs/content_test.go
+
+Test record repository status:
+ M docs/test-records/README.md
+?? docs/test-records/2026-11-06-file-content-inspection-baseline-api-02.log
+?? docs/test-records/2026-11-06-file-content-inspection-baseline-api.log
+?? docs/test-records/2026-11-06-file-content-inspection-build-01.log
+?? docs/test-records/2026-11-06-file-content-inspection-fileguard-verbose.log
+?? docs/test-records/2026-11-06-file-content-inspection-final-check.log
+?? docs/test-records/2026-11-06-file-content-inspection-format-check-01.log
+?? docs/test-records/2026-11-06-file-content-inspection-format-retry.log
+?? docs/test-records/2026-11-06-file-content-inspection-format.log
+?? docs/test-records/2026-11-06-file-content-inspection-full-01.log
+?? docs/test-records/2026-11-06-file-content-inspection-lf-full-01.log
+?? docs/test-records/2026-11-06-file-content-inspection-local-rclone-01.log
+?? docs/test-records/2026-11-06-file-content-inspection-minio-compile.log
+?? docs/test-records/2026-11-06-file-content-inspection-path-discovery.log
+?? docs/test-records/2026-11-06-file-content-inspection-race-01.log
+?? docs/test-records/2026-11-06-file-content-inspection-race-toolchain.log
+?? docs/test-records/2026-11-06-file-content-inspection-rclone-download.log
+?? docs/test-records/2026-11-06-file-content-inspection-snapshot.log
+?? docs/test-records/2026-11-06-file-content-inspection-targeted-01.log
+?? docs/test-records/2026-11-06-file-content-inspection-targeted-02.log
+?? docs/test-records/2026-11-06-file-content-inspection-test.log
+?? docs/test-records/2026-11-06-file-content-inspection-toolchain.log
+?? docs/test-records/2026-11-06-file-content-inspection-vet-01.log
+?? docs/test-records/2026-11-06-file-content-inspection.md
+?? docs/test-records/2026-11-06-parity-resources-final-race.log
+?? docs/test-records/2026-11-06-parity-resources-format-lf.log
+?? docs/test-records/2026-11-06-parity-resources-full-lf-rebased.log
+?? docs/test-records/2026-11-06-parity-resources-full-lf.log
+?? docs/test-records/2026-11-06-parity-resources-full-race-lf-rebased.log
+?? docs/test-records/2026-11-06-parity-resources-full-race-lf.log
+?? docs/test-records/2026-11-06-parity-resources-full.log
+?? docs/test-records/2026-11-06-parity-resources-main-redeploy.log
+?? docs/test-records/2026-11-06-parity-resources-metadata-debug.log
+?? docs/test-records/2026-11-06-parity-resources-race.log
+?? docs/test-records/2026-11-06-parity-resources-targeted-retry.log
+?? docs/test-records/2026-11-06-parity-resources-targeted.log
+?? docs/test-records/2026-11-06-parity-resources-vet-race-lf-rebased.log
+?? docs/test-records/2026-11-06-parity-resources-vet-race-lf.log
+?? docs/test-records/2026-11-06-parity-resources-vet.log
+?? docs/test-records/2026-11-06-parity-resources.md

@@ -1,0 +1,8 @@
+{
+  "head": "7b6886045f7383e595bbe4ec980e0e711e1b20cb",
+  "base": "eba119b3f6c3230aac3cd2ab0cf27c2c67e6fddd",
+  "lf_snapshot": "C:\\Users\\SSAFY\\AppData\\Local\\Temp\\claude\\9547001a4aafcf2a\\0c640b08-2b2d-4a26-a899-f56be5a4e22c\\scratchpad\\platform-pr-lf-0xq_oyqj",
+  "gofmt_checked": 19,
+  "gofmt": "PASS",
+  "platform": "Windows Go; git archive LF bytes; not Linux"
+}

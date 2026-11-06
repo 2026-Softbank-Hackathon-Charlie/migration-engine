@@ -1,0 +1,5 @@
+go version go1.26.7 windows/amd64
+go1.26.7
+auto
+
+rclone availability:

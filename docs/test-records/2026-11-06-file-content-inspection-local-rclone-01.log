@@ -1,0 +1,14 @@
+rclone v1.70.3
+- os/version: Microsoft Windows 11 Enterprise 25H2 25H2 (64 bit)
+- os/kernel: 10.0.26200.9711 (x86_64)
+- os/type: windows
+- os/arch: amd64
+- go/version: go1.24.4
+- go/linking: static
+- go/tags: cmount
+=== RUN   TestLocalRcloneIntegration
+--- PASS: TestLocalRcloneIntegration (2.14s)
+PASS
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/fileguard	2.170s
+
+Exit code: 0

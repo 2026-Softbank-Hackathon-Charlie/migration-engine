@@ -1,0 +1,23 @@
+Traceback (most recent call last):
+  File "C:\Users\SSAFY\AppData\Local\Temp\claude\9547001a4aafcf2a\0c640b08-2b2d-4a26-a899-f56be5a4e22c\scratchpad\scripts\export_pr_snapshot.py", line 29, in <module>
+    raise RuntimeError("format check failed: " + fmt.stdout + fmt.stderr)
+RuntimeError: format check failed: C:\Users\SSAFY\AppData\Local\Temp\claude\9547001a4aafcf2a\0c640b08-2b2d-4a26-a899-f56be5a4e22c\scratchpad\platform-pr-lf-wgsfwzuz\cmd\api\main.go
+C:\Users\SSAFY\AppData\Local\Temp\claude\9547001a4aafcf2a\0c640b08-2b2d-4a26-a899-f56be5a4e22c\scratchpad\platform-pr-lf-wgsfwzuz\internal\api\residency_content_test.go
+C:\Users\SSAFY\AppData\Local\Temp\claude\9547001a4aafcf2a\0c640b08-2b2d-4a26-a899-f56be5a4e22c\scratchpad\platform-pr-lf-wgsfwzuz\internal\api\server.go
+C:\Users\SSAFY\AppData\Local\Temp\claude\9547001a4aafcf2a\0c640b08-2b2d-4a26-a899-f56be5a4e22c\scratchpad\platform-pr-lf-wgsfwzuz\internal\fileguard\scan.go
+C:\Users\SSAFY\AppData\Local\Temp\claude\9547001a4aafcf2a\0c640b08-2b2d-4a26-a899-f56be5a4e22c\scratchpad\platform-pr-lf-wgsfwzuz\internal\fileguard\scan_test.go
+C:\Users\SSAFY\AppData\Local\Temp\claude\9547001a4aafcf2a\0c640b08-2b2d-4a26-a899-f56be5a4e22c\scratchpad\platform-pr-lf-wgsfwzuz\internal\fileguard\transfer.go
+C:\Users\SSAFY\AppData\Local\Temp\claude\9547001a4aafcf2a\0c640b08-2b2d-4a26-a899-f56be5a4e22c\scratchpad\platform-pr-lf-wgsfwzuz\internal\fileguard\transfer_test.go
+C:\Users\SSAFY\AppData\Local\Temp\claude\9547001a4aafcf2a\0c640b08-2b2d-4a26-a899-f56be5a4e22c\scratchpad\platform-pr-lf-wgsfwzuz\internal\fileguard\zip.go
+C:\Users\SSAFY\AppData\Local\Temp\claude\9547001a4aafcf2a\0c640b08-2b2d-4a26-a899-f56be5a4e22c\scratchpad\platform-pr-lf-wgsfwzuz\internal\plans\residency.go
+C:\Users\SSAFY\AppData\Local\Temp\claude\9547001a4aafcf2a\0c640b08-2b2d-4a26-a899-f56be5a4e22c\scratchpad\platform-pr-lf-wgsfwzuz\internal\preflight\gate\content_test.go
+C:\Users\SSAFY\AppData\Local\Temp\claude\9547001a4aafcf2a\0c640b08-2b2d-4a26-a899-f56be5a4e22c\scratchpad\platform-pr-lf-wgsfwzuz\internal\preflight\gate\gate.go
+C:\Users\SSAFY\AppData\Local\Temp\claude\9547001a4aafcf2a\0c640b08-2b2d-4a26-a899-f56be5a4e22c\scratchpad\platform-pr-lf-wgsfwzuz\internal\preflight\gate\gate_test.go
+C:\Users\SSAFY\AppData\Local\Temp\claude\9547001a4aafcf2a\0c640b08-2b2d-4a26-a899-f56be5a4e22c\scratchpad\platform-pr-lf-wgsfwzuz\internal\preflight\gate\live_minio_test.go
+C:\Users\SSAFY\AppData\Local\Temp\claude\9547001a4aafcf2a\0c640b08-2b2d-4a26-a899-f56be5a4e22c\scratchpad\platform-pr-lf-wgsfwzuz\internal\preflight\model.go
+C:\Users\SSAFY\AppData\Local\Temp\claude\9547001a4aafcf2a\0c640b08-2b2d-4a26-a899-f56be5a4e22c\scratchpad\platform-pr-lf-wgsfwzuz\internal\preflight\residency\config.go
+C:\Users\SSAFY\AppData\Local\Temp\claude\9547001a4aafcf2a\0c640b08-2b2d-4a26-a899-f56be5a4e22c\scratchpad\platform-pr-lf-wgsfwzuz\internal\preflight\residency\content_test.go
+C:\Users\SSAFY\AppData\Local\Temp\claude\9547001a4aafcf2a\0c640b08-2b2d-4a26-a899-f56be5a4e22c\scratchpad\platform-pr-lf-wgsfwzuz\internal\preflight\residency\evaluator.go
+C:\Users\SSAFY\AppData\Local\Temp\claude\9547001a4aafcf2a\0c640b08-2b2d-4a26-a899-f56be5a4e22c\scratchpad\platform-pr-lf-wgsfwzuz\internal\runs\content_test.go
+C:\Users\SSAFY\AppData\Local\Temp\claude\9547001a4aafcf2a\0c640b08-2b2d-4a26-a899-f56be5a4e22c\scratchpad\platform-pr-lf-wgsfwzuz\internal\runs\runs.go
+

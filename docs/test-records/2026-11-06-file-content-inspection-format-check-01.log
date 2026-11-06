@@ -1,0 +1,25 @@
+warning: in the working copy of 'cmd/api/main.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/api/server.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/plans/residency.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/preflight/gate/gate.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/preflight/gate/gate_test.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/preflight/gate/live_minio_test.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/preflight/model.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/preflight/residency/config.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/preflight/residency/evaluator.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/runs/runs.go', LF will be replaced by CRLF the next time Git touches it
+Checked 19 changed/new Go files
+Formatting check PASS: no gofmt differences
+warning: in the working copy of 'cmd/api/main.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/api/server.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/plans/residency.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/preflight/gate/gate.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/preflight/gate/gate_test.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/preflight/gate/live_minio_test.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/preflight/model.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/preflight/residency/config.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/preflight/residency/evaluator.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'internal/runs/runs.go', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/test-records/README.md', LF will be replaced by CRLF the next time Git touches it
+
+Exit code: 0

@@ -119,5 +119,5 @@ start-target에서 실패해도 사용자 쓰기는 대상에 하나도 들어�
 
 - platform: `cold` Plan에 카나리 거부, 콘솔에 `start-target` 단계 표시. 엔진 버전 올림과 함께 한다
 - infra: 엔진 계정(`hopcharlie-migrator`)에 대상 네임스페이스 Deployment/StatefulSet patch 권한
-- 실제 CNPG에서 승격된 대상을 다시 강등하는 시간과 동작은 재지 않았다. 가짜 토폴로지 테스트만 했다
-- 기동 마이그레이션을 끌 수 없는 앱으로 하는 e2e(정상, start-target 실패 시 원복)는 아직 없다
+- 실제 EKS(CNPG 1.30.1) e2e, 2026-11-06(`docs/test-records`): 기동 때 DDL을 실행하는 앱으로 정상 전환(쓰기 대기 12.4초, start-target 3.1초)과 start-target 실패 시 원복(`rolled_back`, 원복 10.5초, 응답한 쓰기 누락 0)을 확인했다. 클러스터 사이 cold 전환은 아직이다
+- 쓰기 대기(settle + `startTimeout` + 원복)가 게이트웨이 최대 보류(55초)를 넘으면 그동안의 사용자 쓰기가 503으로 끝난다(원복 회차 59.8초, 1건). `startTimeout`은 이 여유 안에서 잡아야 한다. 엔진이 최대 보류 값을 받아 검증하는 것은 후속 과제다

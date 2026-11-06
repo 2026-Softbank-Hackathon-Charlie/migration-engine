@@ -1,0 +1,6 @@
+# kubectl -n cold-test logs <app-dst pod>  (image v2, DATABASE_URL -> cold-dst-rw while cold-dst is a replica), 2026-11-06 00:15:25 UTC
+2026/11/06 00:15:25 goose: no migrations to run. current version: 2
+2026/11/06 00:15:25 bootstrap schema on start: ERROR: cannot execute CREATE TABLE in a read-only transaction (SQLSTATE 25006)
+# kubectl -n cold-test get pod -l app=app-dst
+app-dst-749f59475d-zp584   1/1   Running            0             2m28s   <- image v1 (goose only): starts fine on the replica
+app-dst-7d4cd6c756-ktpdx   0/1   CrashLoopBackOff   3 (10s ago)   46s     <- image v2 (goose + IF NOT EXISTS DDL)

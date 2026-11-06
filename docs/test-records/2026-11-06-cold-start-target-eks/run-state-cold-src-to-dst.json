@@ -1,0 +1,228 @@
+{
+  "runId": "cold-src-to-dst-20261106-001826",
+  "planId": "cold-src-to-dst",
+  "createdAt": "2026-11-06T00:18:26.020363311Z",
+  "updatedAt": "2026-11-06T00:18:39.716234347Z",
+  "outcome": "succeeded",
+  "steps": {
+    "cutover": {
+      "status": "succeeded",
+      "startedAt": "2026-11-06T00:18:39.638077115Z",
+      "endedAt": "2026-11-06T00:18:39.643652098Z",
+      "evidence": {
+        "backend": "dst",
+        "downtimeMillis": 12393,
+        "maxDowntimeMillis": 180000,
+        "withinBudget": true
+      }
+    },
+    "delta": {
+      "status": "succeeded",
+      "startedAt": "2026-11-06T00:18:27.243256639Z",
+      "endedAt": "2026-11-06T00:18:27.244808689Z",
+      "evidence": {
+        "lagBytes": 0
+      }
+    },
+    "fence": {
+      "status": "succeeded",
+      "startedAt": "2026-11-06T00:18:27.2449325Z",
+      "endedAt": "2026-11-06T00:18:27.252539053Z",
+      "evidence": {
+        "fenceLsn": "0/5017680",
+        "writesHeldAt": "2026-11-06T00:18:27.250085889Z"
+      }
+    },
+    "finalize": {
+      "status": "succeeded",
+      "startedAt": "2026-11-06T00:18:39.697192483Z",
+      "endedAt": "2026-11-06T00:18:39.716011931Z",
+      "evidence": {
+        "downtimeMillis": 12393,
+        "source": {
+          "phase": "Cluster in healthy state",
+          "currentPrimary": "cold-src-1",
+          "instances": 1,
+          "readyInstances": 1,
+          "hasDemotionToken": true,
+          "self": "cold-src",
+          "replicaPrimary": "cold-dst",
+          "replicaSource": "cold-dst"
+        },
+        "target": {
+          "phase": "Cluster in healthy state",
+          "currentPrimary": "cold-dst-1",
+          "instances": 1,
+          "readyInstances": 1,
+          "hasDemotionToken": false,
+          "self": "cold-dst",
+          "replicaPrimary": "cold-dst",
+          "replicaSource": "cold-src"
+        }
+      }
+    },
+    "precheck": {
+      "status": "succeeded",
+      "startedAt": "2026-11-06T00:18:26.020595946Z",
+      "endedAt": "2026-11-06T00:18:26.070082516Z",
+      "evidence": {
+        "source": {
+          "phase": "Cluster in healthy state",
+          "currentPrimary": "cold-src-1",
+          "instances": 1,
+          "readyInstances": 1,
+          "hasDemotionToken": false,
+          "self": "cold-src",
+          "replicaPrimary": "cold-src",
+          "replicaSource": "cold-dst"
+        },
+        "target": {
+          "phase": "Cluster in healthy state",
+          "currentPrimary": "cold-dst-1",
+          "instances": 1,
+          "readyInstances": 1,
+          "hasDemotionToken": false,
+          "self": "cold-dst",
+          "replicaPrimary": "cold-src",
+          "replicaSource": "cold-src"
+        },
+        "targetApp": {
+          "kind": "Deployment",
+          "mode": "cold",
+          "name": "app-dst",
+          "podsNow": 2
+        }
+      }
+    },
+    "prepare": {
+      "status": "succeeded",
+      "startedAt": "2026-11-06T00:18:26.070258479Z",
+      "endedAt": "2026-11-06T00:18:27.238380078Z",
+      "evidence": {
+        "target": {
+          "phase": "Cluster in healthy state",
+          "currentPrimary": "cold-dst-1",
+          "instances": 1,
+          "readyInstances": 1,
+          "hasDemotionToken": false,
+          "self": "cold-dst",
+          "replicaPrimary": "cold-src",
+          "replicaSource": "cold-src"
+        },
+        "targetApp": "stopped until the target is promoted"
+      }
+    },
+    "presync": {
+      "status": "succeeded",
+      "startedAt": "2026-11-06T00:18:27.238603464Z",
+      "endedAt": "2026-11-06T00:18:27.243099324Z",
+      "evidence": {
+        "lagBytes": 0
+      }
+    },
+    "start-target": {
+      "status": "succeeded",
+      "startedAt": "2026-11-06T00:18:36.56666336Z",
+      "endedAt": "2026-11-06T00:18:39.637842496Z",
+      "evidence": {
+        "kind": "Deployment",
+        "name": "app-dst",
+        "ready": 2,
+        "readyMillis": 3067,
+        "replicas": 2,
+        "smoke": [
+          {
+            "method": "GET",
+            "path": "/healthz",
+            "status": 200,
+            "ok": true,
+            "millis": 3
+          },
+          {
+            "method": "GET",
+            "path": "/",
+            "status": 200,
+            "ok": true,
+            "millis": 0
+          }
+        ],
+        "startMillis": 3070
+      }
+    },
+    "switchover": {
+      "status": "succeeded",
+      "startedAt": "2026-11-06T00:18:27.252792605Z",
+      "endedAt": "2026-11-06T00:18:36.565911524Z",
+      "evidence": {
+        "demotionToken": true,
+        "fenceGate": {
+          "durationMillis": 19,
+          "ok": true,
+          "tables": [
+            {
+              "table": "public.app_settings",
+              "sourceCount": 0,
+              "targetCount": 0,
+              "match": true
+            },
+            {
+              "table": "public.goose_db_version",
+              "sourceCount": 3,
+              "targetCount": 3,
+              "sourceHash": "25cbcafdc7d674c1287950e1731c02ba",
+              "targetHash": "25cbcafdc7d674c1287950e1731c02ba",
+              "match": true
+            },
+            {
+              "table": "public.visits",
+              "sourceCount": 213,
+              "targetCount": 213,
+              "sourceHash": "44d96be98d53d6637745e8fdec2edf52",
+              "targetHash": "44d96be98d53d6637745e8fdec2edf52",
+              "match": true
+            }
+          ]
+        },
+        "fenceLsn": "0/5017680",
+        "settleMillis": 6179,
+        "targetLsnAfterPromotion": "0/6002DC0",
+        "targetReplayLsn": "0/5017680"
+      }
+    },
+    "verify": {
+      "status": "succeeded",
+      "startedAt": "2026-11-06T00:18:39.643738735Z",
+      "endedAt": "2026-11-06T00:18:39.696908555Z",
+      "evidence": {
+        "report": {
+          "ok": true,
+          "tables": [
+            {
+              "table": "public.app_settings",
+              "checked": 0,
+              "missing": 0
+            },
+            {
+              "table": "public.goose_db_version",
+              "checked": 3,
+              "missing": 0
+            },
+            {
+              "table": "public.visits",
+              "checked": 215,
+              "missing": 0
+            }
+          ],
+          "missingRows": 0
+        }
+      }
+    }
+  },
+  "writesHeld": false,
+  "writesHeldAt": "2026-11-06T00:18:27.250085889Z",
+  "fenceLsn": "0/5017680",
+  "sourceDemoted": true,
+  "promoteRequested": true,
+  "trafficOnTarget": true,
+  "downtimeMillis": 12393
+}

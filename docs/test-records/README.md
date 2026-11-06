@@ -18,6 +18,7 @@
 | 2026-11-05 | 실제 EKS 이전 리허설 (hello DB, 엔진·부하 클러스터 안에서, 왕복) | 엔진 3/4 성공 (1회차 halt, 원인 port-forward), 응답한 쓰기 누락 0 | [아래](#2026-11-05-실제-eks-이전-리허설) |
 | 2026-11-05 | 실제 AWS ↔ GCP 이전 리허설 (EKS ↔ GKE, Tailscale operator 경로, 부하 중) | gateway 없이: EKS→GKE 성공, GKE→EKS rolled_back. **gateway(http)로 왕복 2/2 성공, 실패 요청 0, 쓰기 대기 17.4초, 응답한 쓰기 누락 0** | [아래](#2026-11-05-실제-aws--gcp-이전-리허설) |
 | 2026-11-05 | **운영 moimroom 실제 이전 AWS → GCP** (공개 URL 부하 중, 운영 게이트웨이) | 엔진 **halted** at switchover (대상 승격은 성공, port-forward로 안정 확인 실패) → 운영자가 수동 cutover. 응답한 예약 1,487건·사진 70장 누락 0, 쓰기 실패 9건(보류 55초 초과 503), **쓰기 공백 3분 36초** | [아래](#2026-11-05-운영-moimroom-실제-이전-aws--gcp) |
+| 2026-11-06 | cold 모드(ADR 0012) 실제 EKS e2e: 기동 때 DDL을 실행하는 앱, 부하 중 | 문제 재현(replica에서 기동 실패) 확인. **정상 전환 성공, 쓰기 대기 12.4초, 실패 0, 누락 0**. **실패 주입 → 승격 되돌림 `rolled_back` 성공**, 누락 0, 쓰기 대기 59.8초(503 1건) | [아래](#2026-11-06-cold-모드-실제-eks-e2e) |
 
 ---
 
@@ -455,3 +456,73 @@ X2에서 본 경쟁을 없애려고 쓰기를 HTTP로 플랫폼 게이트웨이(
 - GitOps: EKS 앱과 DB는 Argo가 계속 관리한다(지금 EKS DB는 replica, EKS 앱은 트래픽 없음). GKE 앱 변경(`DATABASE_URL`, `SEED_SPACES`, replicas 1)은 kubectl patch로 했고 Git에 없다. infra `apps.yaml`의 gke 대상도 아직 `moimroom-gcp-db`
 - 부하는 AWS 리전 파드에서 공개 URL로 보냈다. 실제 사용자 위치와 다르다
 - 남긴 것: 워크로드 EKS `hop-migrate`(러너 파드, env Secret, 프록시 허용 정책), `moimroom/*-gke-*` Secret 2개, GKE `charlie-apps`의 러너 SA·토큰·Role, 복사한 Secret 5개, `moimroom-db-gke-baseline`, `hopcharlie-db-network/db-network-operator-node-local-dns`. 테스트 예약 1,487건과 사진 70장(손님 이름 `migration-rehearsal`)은 운영 DB와 GCS에 남아 있음
+
+## 2026-11-06 cold 모드 실제 EKS e2e
+
+ADR 0012(대상 앱을 승격 뒤에 띄우는 cold 모드)를 실제 클러스터에서 확인했다. 입력과 원시 로그: [2026-11-06-cold-start-target-eks/](2026-11-06-cold-start-target-eks/)
+
+- 엔진: `feat/cold-start-target` `79a3513`(PR #13) linux 빌드, 게이트웨이: platform main `fb3eb20`
+- 환경: 워크로드 EKS, 네임스페이스 `cold-test` 하나에 CNPG 1.30.1 두 개(`cold-src`, `cold-dst`, PG 18.6, gp3 1Gi, `smartShutdownTimeout: 5`). 엔진·게이트웨이·부하는 같은 네임스페이스의 러너 파드(이 네임스페이스 권한만, Secret 권한 없음)에서 실행. 운영 앱은 건드리지 않음
+- 앱: [app/main.go](2026-11-06-cold-start-target-eks/app/main.go). 시작할 때 goose v3.26.0 `Up`을 돌린 뒤, 매번 `CREATE TABLE IF NOT EXISTS`를 실행한다(끄는 옵션 없음). Deployment 2개(`app-src`, `app-dst`, 각 2대), readiness `/healthz`
+- 부하: 게이트웨이를 거쳐 0.1초마다 `POST /visits` 한 건(순차 클라이언트 하나), 4분. 응답 201을 받은 id만 기록하고 끝난 뒤 양쪽 DB에서 확인
+
+### 1. 문제 재현: replica 위의 대상 앱
+
+| 이미지 | replica 위에서 |
+|---|---|
+| v1: goose `Up`만 | **정상 기동**. 적용할 마이그레이션이 없으면 goose는 아무것도 쓰지 않는다(`no migrations to run`) |
+| v2: goose `Up` + 매번 `CREATE TABLE IF NOT EXISTS` | **기동 실패**, CrashLoopBackOff: `cannot execute CREATE TABLE in a read-only transaction (SQLSTATE 25006)` |
+
+goose를 쓰는 앱 자체는 warm 모드로 옮길 수 있다. 시작할 때 무엇이든 쓰는 앱(이 v2, 고치기 전 moimroom)이 cold 모드 대상이다.
+
+### 2. cold 정상 전환 (src → dst)
+
+| 시각 (UTC) | 사건 |
+|---|---|
+| 00:18:26.0 ~ 27.2 | precheck, prepare(대상 앱 0개로, 파드 없어질 때까지 1.1초) |
+| 00:18:27.25 | fence: 쓰기 보류 |
+| 00:18:27.3 | fence gate 통과(테이블 3) |
+| 00:18:29.4 | 대상 승격 요청 |
+| 00:18:36.6 | switchover 완료(settle 포함 9.3초) |
+| 00:18:36.6 → 39.6 | **start-target 3.1초**: 2대로 늘림 → 2대 ready → 스모크 2건 통과 |
+| 00:18:39.64 | cutover, 쓰기 대기 **12,393 ms** |
+
+- 부하: 2,279건 모두 201(src 213, dst 2,066), **실패 0**, 가장 긴 쓰기 공백 12.43초
+- 응답한 2,279건이 새 primary(dst)와 replica(src)에 모두 있음(누락 0)
+- 대상 앱은 승격된 primary 위에서 같은 DDL을 통과하고 기동(로그 `dst listening`). prepare가 남긴 Stop annotation은 Scale이 지움
+
+### 3. 실패 주입 → 승격 되돌림 (dst → src)
+
+대상 앱 `app-src`에 존재하지 않는 DB 호스트를 배포해 승격 뒤에도 뜨지 못하게 했다. `startTimeout` 40초.
+
+| 시각 (UTC) | 사건 |
+|---|---|
+| 00:23:03.67 | fence: 쓰기 보류 |
+| 00:23:05.8 | 대상(src) 승격 요청 |
+| 00:23:12.96 | switchover 완료(9.3초) |
+| 00:23:12.98 | 대상 앱 2대로 늘림 |
+| 00:23:52.97 | start-target 실패: 40초 동안 ready 0/2 |
+| 00:23:54.02 | 원복: 대상 앱 정지(1.1초) |
+| 00:23:54.09 | 원복: 대상(src) 강등 요청 |
+| 00:23:56.18 | 원복: 원본(dst)을 대상의 강등 토큰으로 재승격(강등 토큰까지 2.1초) |
+| 00:24:03.42 | 원복: 원본 settle(6.2초), 복제 지연 0 확인 |
+| 00:24:03.44 | 원본으로 route·release, **`rolled_back`** (원복 자체 10.5초) |
+
+- 결과: dst primary, src replica(streaming), `app-src` 0대, `app-dst` 2대 그대로 서비스. 상태 파일의 플래그(`writesHeld`, `sourceDemoted`, `promoteRequested`, `trafficOnTarget`) 모두 false
+- 부하: 1,805건 201, 실패 1건(503, 게이트웨이 보류 55초 초과), 가장 긴 쓰기 공백 59.8초
+- 응답한 1,805건이 dst·src 모두에 있음(누락 0). 두 DB의 visits 전체 행 4,084 = 2회차 2,279 + 3회차 1,805. 실패한 1건은 커밋되지 않았고, 원복 과정에서 남거나 빠진 행이 없다
+
+### 발견한 것
+
+- **쓰기 대기가 게이트웨이 최대 보류(55초)를 넘으면 사용자 쓰기가 503으로 끝난다.** 원복 회차는 settle 9.3초 + `startTimeout` 40초 + 원복 10.5초로 59.8초를 붙잡았다. 엔진은 게이트웨이의 최대 보류 값을 모른다. cold Plan의 `startTimeout`은 "게이트웨이 최대 보류 − settle − 원복 시간"보다 짧게 잡아야 한다. 엔진이 이 값을 받아 검증하게 할지는 후속 과제다
+- goose v3.26.0은 적용할 마이그레이션이 없으면 replica에서도 뜬다(위 1)
+
+### 검증하지 않은 것
+
+- 클러스터 사이(EKS ↔ GKE) cold 전환. 이번은 한 클러스터 한 네임스페이스
+- platform API 경로(카나리 거부, 콘솔 표시)는 아직 구현 안 함
+- StatefulSet 대상 앱, 실제 오픈소스 앱(Flyway·Liquibase 사용 앱 등)
+
+### 정리
+
+- 네임스페이스 `cold-test`(DB 2개와 PVC, 앱, 러너, RBAC) 삭제, ECR `hopcharlie/platform`의 `cold-test-goose-1`, `cold-test-goose-2` 태그 삭제

@@ -1,0 +1,43 @@
+== setup (work dir C:/Users/SSAFY/AppData/Local/Temp/claude/C--Users-SSAFY-Downloads-softbank/d60a5f00-7cdd-4424-acf5-f835e4858765/scratchpad/gw-rehearsal-timing2, CNPG 1.30.1)
+   platform gateway from fb3eb20, engine 292ebaf
+Set kubectl context to "kind-hopgw"
+deployment "cnpg-controller-manager" successfully rolled out
+cluster.postgresql.cnpg.io/pg-src condition met
+pod/pg-src-1 condition met
+   source: 18.6 (Debian 18.6-1.pgdg13+2)
+   app through gateway: {"db":"pg-src","hello":"world","inRecovery":false,"instance":"hello-src","visits":1}
+== 1. src -> dst under load
+   10:05:06.994   cutover write downtime downtimeMillis=13068
+   10:05:07.059 ★ migration succeeded downtimeMillis=13068
+   OK   outcome=succeeded
+   gateway state: {"backends":[{"healthy":true,"lastCheck":"2026-11-06T01:05:06.9440747Z","name":"src","url":"http://127.0.0.1:55590"},{"healthy":true,"lastCheck":"2026-11-06T01:05:06.9440747Z","name":"dst","url":"http://127.0.0.1:55591"}],"heldWrites":0,"inFlight":{"reads":0,"writes":0},"maxHold":"55s","readWeights":{"dst":100,"src":0},"stats":{"dst":{"errorRate":0,"errors":0,"p50Millis":6.2,"p95Millis":27.5,"p99Millis":29.5,"requests":10,"rps":0.96694505,"windowSeconds":10},"src":{"errorRate":0,"errors":0,"p50Millis":0,"p95Millis":0,"p99Millis":0,"requests":0,"rps":0,"windowSeconds":10}},"totals":{"dst":{"errors":0,"requests":10,"retried":0},"src":{"errors":0,"requests":794,"retried":0}},"updatedAt":"2026-11-06T01:05:07.3418491Z","writeBackend":"dst","writesHeld":false}
+   app: {"db":"pg-dst","hello":"world","inRecovery":false,"instance":"hello-dst","visits":803}
+== 2. dst -> src, switchover times out -> rolled back
+   10:05:18.033 ! switchover [rollback] rolling back to source 
+   10:06:06.124 ! switchover [rollback] rolled back; source is primary and serving traffic 
+   OK   outcome=rolled_back
+   gateway state: {"backends":[{"healthy":true,"lastCheck":"2026-11-06T01:06:04.9442256Z","name":"src","url":"http://127.0.0.1:55590"},{"healthy":true,"lastCheck":"2026-11-06T01:06:04.9447404Z","name":"dst","url":"http://127.0.0.1:55591"}],"heldWrites":0,"inFlight":{"reads":0,"writes":0},"maxHold":"55s","readWeights":{"dst":100,"src":0},"stats":{"dst":{"errorRate":0,"errors":0,"p50Millis":7,"p95Millis":18,"p99Millis":19.6,"requests":8,"rps":0.7682966,"windowSeconds":10},"src":{"errorRate":0,"errors":0,"p50Millis":0,"p95Millis":0,"p99Millis":0,"requests":0,"rps":0,"windowSeconds":10}},"totals":{"dst":{"errors":0,"requests":225,"retried":0},"src":{"errors":0,"requests":794,"retried":0}},"updatedAt":"2026-11-06T01:06:06.4126452Z","writeBackend":"dst","writesHeld":false}
+   app: {"db":"pg-dst","hello":"world","inRecovery":false,"instance":"hello-dst","visits":1019}
+== 3. writes
+   {
+     "failed": 0,
+     "latencyMs": {
+       "max": 48395,
+       "p50": 5,
+       "p99": 146
+     },
+     "ok": 1202,
+     "statuses": {
+       "200": 1202
+     },
+     "total": 1202,
+     "writesByDB": {
+       "pg-dst": 410,
+       "pg-src": 792
+     }
+   }   primary=pg-dst visits rows=1203, 2xx answers=1202, missing on primary=0, failed requests=0
+   OK   no acknowledged write is missing
+   OK   no failed request
+== all scenarios passed
+
+[exited with code 0]

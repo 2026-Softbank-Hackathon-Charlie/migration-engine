@@ -1,0 +1,32 @@
+run gw-src-to-dst-20261106-011447 (state: .hopcharlie\runs\gw-src-to-dst-20261106-011447.json)
+10:14:47.267 ▶ precheck
+10:14:47.314 ✔ precheck (47 ms)
+10:14:47.316 ▶ prepare
+10:14:47.319   prepare applying target manifest manifest=C:/Users/SSAFY/AppData/Local/Temp/claude/C--Users-SSAFY-Downloads-softbank/d60a5f00-7cdd-4424-acf5-f835e4858765/scratchpad/ss-run1-5/target.yaml
+10:15:17.353   prepare WARNING: target cluster runs 1 instance(s): until the old source has streamed them, writes after cutover live on one node only; use instances >= 2 (with synchronous replication) where losing that node is not acceptable 
+10:15:17.355 ✔ prepare (30039 ms)
+10:15:17.357 ▶ presync
+10:15:17.363   presync replication lag lagBytes=0 sourceLsn=0/400FE28 targetLsn=0/400FE28
+10:15:17.365 ✔ presync (7 ms)
+10:15:17.366 ▶ delta
+10:15:17.369   delta replication lag lagBytes=0 sourceLsn=0/400FE28 targetLsn=0/400FE28
+10:15:17.378 ✔ delta (12 ms)
+10:15:17.380 ▶ fence
+10:15:17.389   fence writes held at gateway 
+10:15:17.393 ✔ fence (13 ms)
+10:15:17.395 ▶ switchover
+10:15:17.402   switchover fence gate passed tables=1
+10:15:17.432   switchover source demotion requested newPrimary=pg-dst
+10:15:18.457   switchover target promotion requested oldPrimary=pg-src
+10:15:19.463   switchover target writable afterPromotionMillis=1026
+10:15:30.800   switchover target settled inRecovery=0 lastBlockedMillis=10303 notHealthy=10 pendingRestart=1 polls=23 restarts=1 settleMillis=11337 unobserved=11
+10:15:30.803 ✔ switchover (13407 ms)
+10:15:30.804 ↷ start-target warm mode: the target app already runs
+10:15:30.806 ▶ cutover
+10:15:30.823   cutover write downtime downtimeMillis=13432
+10:15:30.825 ✔ cutover (18 ms)
+10:15:30.828 ▶ verify
+10:15:30.866 ✔ verify (39 ms)
+10:15:30.867 ▶ finalize
+10:15:30.878 ✔ finalize (9 ms)
+10:15:30.879 ★ migration succeeded downtimeMillis=13432

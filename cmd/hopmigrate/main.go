@@ -2,7 +2,7 @@
 //
 //	hopmigrate validate -plan plan.json
 //	hopmigrate status   -plan plan.json
-//	hopmigrate run      -plan plan.json [-run RUN_ID] [-state-dir DIR] [-json]
+//	hopmigrate run      -plan plan.json [-run RUN_ID [-resume-halted]] [-state-dir DIR] [-json]
 //	hopmigrate step     -plan plan.json -run RUN_ID -step NAME [-json]
 //	hopmigrate verify   -plan plan.json [-json]
 //	hopmigrate show     -run RUN_ID [-state-dir DIR]
@@ -162,7 +162,13 @@ func cmdStatus(ctx context.Context, args []string) error {
 
 func cmdRun(ctx context.Context, args []string) error {
 	var c common
-	flags("run", &c, true).Parse(args)
+	var resumeHalted bool
+	fs := flags("run", &c, true)
+	fs.BoolVar(&resumeHalted, "resume-halted", false, "with -run: continue a run that halted after the target's promotion, once the engine has confirmed the target is the only primary (ADR 0013)")
+	fs.Parse(args)
+	if resumeHalted && c.runID == "" {
+		return errors.New("-resume-halted needs -run")
+	}
 	e, err := newEngine(c)
 	if err != nil {
 		return err
@@ -170,6 +176,11 @@ func cmdRun(ctx context.Context, args []string) error {
 	defer e.Close()
 	if !c.json {
 		fmt.Printf("run %s (state: %s)\n", e.RunID(), e.StatePath())
+	}
+	if resumeHalted {
+		if err := e.ResumeHalted(ctx); err != nil {
+			return err
+		}
 	}
 	return e.Run(ctx)
 }

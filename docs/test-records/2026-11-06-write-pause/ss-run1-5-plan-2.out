@@ -1,0 +1,24 @@
+run gw-dst-to-src-timeout-20261106-011541 (state: .hopcharlie\runs\gw-dst-to-src-timeout-20261106-011541.json)
+10:15:41.247 ▶ precheck
+10:15:41.295 ✔ precheck (47 ms)
+10:15:41.297 ▶ prepare
+10:15:41.318   prepare WARNING: target cluster runs 1 instance(s): until the old source has streamed them, writes after cutover live on one node only; use instances >= 2 (with synchronous replication) where losing that node is not acceptable 
+10:15:41.319 ✔ prepare (22 ms)
+10:15:41.321 ▶ presync
+10:15:41.327   presync replication lag lagBytes=0 sourceLsn=0/60185C8 targetLsn=0/60185C8
+10:15:41.329 ✔ presync (7 ms)
+10:15:41.330 ▶ delta
+10:15:41.333   delta replication lag lagBytes=0 sourceLsn=0/60185C8 targetLsn=0/60185C8
+10:15:41.343 ✔ delta (12 ms)
+10:15:41.344 ▶ fence
+10:15:41.353   fence writes held at gateway 
+10:15:41.357 ✔ fence (12 ms)
+10:15:41.360 ▶ switchover
+10:15:41.367   switchover fence gate passed tables=1
+10:15:41.398   switchover source demotion requested newPrimary=pg-src
+10:15:41.662 ✘ switchover: waiting for demotion token: context deadline exceeded
+10:15:41.662 ! switchover [rollback] rolling back to source 
+10:15:43.699   switchover re-promoting source primary=pg-dst
+10:16:19.086   switchover source settled restarts=1 settleMillis=10816 unobservedPolls=10
+10:16:19.106 ! switchover [rollback] rolled back; source is primary and serving traffic 
+error: rolled back after switchover: waiting for demotion token: context deadline exceeded

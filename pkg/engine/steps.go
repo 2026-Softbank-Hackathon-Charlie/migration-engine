@@ -121,16 +121,24 @@ func (e *Engine) prepare(ctx context.Context) (map[string]any, error) {
 		return ev, err
 	}
 
-	db, err := e.targetDB(ctx)
+	// Right after CNPG reports the new cluster healthy its service may still
+	// refuse a connection or two (seen in the platform E2E: "tls error: EOF").
+	// Retry until catchupTimeout instead of failing the run on one attempt.
+	rec, err := e.readRecovery(wctx, e.plan.Target.DSN, &e.dstDB)
 	if err != nil {
 		return ev, fmt.Errorf("target db: %w", err)
 	}
-	rec, err := db.InRecovery(ctx)
-	if err != nil {
-		return ev, err
-	}
 	if !rec {
 		return ev, errors.New("target database is writable; it must be a replica before migration")
+	}
+	// Replication to the old source after cutover is asynchronous, so the new
+	// primary is the only copy of the latest writes until it streams them. One
+	// instance means one disk and one node (ADR 0013). Not a failure: the demo
+	// clusters run one instance on purpose.
+	if d.Instances < 2 {
+		w := fmt.Sprintf("target cluster runs %d instance(s): until the old source has streamed them, writes after cutover live on one node only; use instances >= 2 (with synchronous replication) where losing that node is not acceptable", d.Instances)
+		ev["warnings"] = []string{w}
+		e.log(StepPrepare, "WARNING: "+w, nil)
 	}
 	if a := e.plan.Target.App; a.Cold() {
 		// A cold app must not run on the replica (it would fail or crash-loop
@@ -177,7 +185,25 @@ func (e *Engine) delta(ctx context.Context) (map[string]any, error) {
 	}
 	lag, err := e.waitCaughtUp(ctx, StepDelta, e.plan.Thresholds.CatchupTimeout.Duration)
 	ev["lagBytes"] = lag
-	return ev, err
+	if err != nil {
+		return ev, err
+	}
+	// The fence gate scans every compared table while writes are held, so its
+	// time grows with the data, not with the traffic. Time a rehearsal now,
+	// while writes still flow (its mismatches mean nothing yet), and refuse to
+	// hold writes for longer than maxFenceGate (ADR 0013).
+	if *e.plan.Verify.FenceGate {
+		start := time.Now()
+		if _, _, err := e.verifier.FenceGate(ctx, e.srcDB, e.dstDB); err != nil {
+			return ev, fmt.Errorf("fence gate rehearsal: %w", err)
+		}
+		took, limit := time.Since(start), e.plan.Thresholds.MaxFenceGate.Duration
+		ev["fenceGateRehearsalMillis"] = took.Milliseconds()
+		if took > limit {
+			return ev, fmt.Errorf("the fence gate took %s before the hold, over thresholds.maxFenceGate %s: writes would be held at least that long; narrow verify.tables, or raise maxFenceGate knowing the gateway answers 503 to a write held 55s", took.Round(time.Millisecond), limit)
+		}
+	}
+	return ev, nil
 }
 
 // fence: hold writes at the gateway, record the source's final LSN, and copy
@@ -228,8 +254,18 @@ func (e *Engine) switchover(ctx context.Context) (map[string]any, error) {
 	if _, err := e.targetDB(tctx); err != nil {
 		return ev, err
 	}
+	// timing splits the write hold into its parts (ADR 0013).
+	timing := map[string]int64{}
+	ev["timingMillis"] = timing
+	mark := time.Now()
+	lap := func(name string) {
+		now := time.Now()
+		timing[name] = now.Sub(mark).Milliseconds()
+		mark = now
+	}
 	replayed, err := e.waitReplayed(tctx, e.state.FenceLSN)
 	ev["targetReplayLsn"] = replayed
+	lap("replayFence")
 	if err != nil {
 		return ev, fmt.Errorf("target did not reach fence LSN %s: %w", e.state.FenceLSN, err)
 	}
@@ -247,6 +283,7 @@ func (e *Engine) switchover(ctx context.Context) (map[string]any, error) {
 		}
 		e.log(StepSwitchover, "fence gate passed", map[string]any{"tables": len(results)})
 	}
+	lap("fenceGate")
 
 	// 3. Demote source; CNPG publishes a demotion token.
 	srcS, err := e.src.Get(tctx)
@@ -272,6 +309,7 @@ func (e *Engine) switchover(ctx context.Context) (map[string]any, error) {
 	}
 	e.log(StepSwitchover, "source demotion requested", map[string]any{"newPrimary": dstS.Self})
 	demoted, err := e.src.WaitFor(tctx, e.poll/2, e.demotionFinished)
+	lap("demote")
 	if err != nil {
 		return ev, fmt.Errorf("waiting for demotion token: %w", err)
 	}
@@ -284,17 +322,25 @@ func (e *Engine) switchover(ctx context.Context) (map[string]any, error) {
 	}
 	e.log(StepSwitchover, "target promotion requested", map[string]any{"oldPrimary": srcS.Self})
 	if err := e.waitWritable(tctx, e.plan.Target.DSN, &e.dstDB); err != nil {
+		lap("promoteToWritable")
 		return ev, fmt.Errorf("target did not become writable: %w", err)
 	}
+	lap("promoteToWritable")
+	e.log(StepSwitchover, "target writable", map[string]any{"afterPromotionMillis": timing["promoteToWritable"]})
 	if pos, err := e.dstDB.WALPosition(tctx); err == nil {
 		ev["targetLsnAfterPromotion"] = pos
 	}
 	// 5. Writes stay held until CNPG has finished with the new primary.
-	start := time.Now()
-	if err := e.waitSettled(tctx, e.dst, e.plan.Target.DSN, &e.dstDB); err != nil {
+	settle, err := e.waitSettled(tctx, e.dst, e.plan.Target.DSN, &e.dstDB)
+	lap("settle")
+	ev["settle"] = settle
+	ev["settleMillis"] = timing["settle"]
+	if err != nil {
 		return ev, fmt.Errorf("target did not settle after promotion: %w", err)
 	}
-	ev["settleMillis"] = time.Since(start).Milliseconds()
+	e.log(StepSwitchover, "target settled", map[string]any{"settleMillis": timing["settle"], "polls": settle.Polls,
+		"unobserved": settle.Unobserved, "restarts": settle.Restarts, "notHealthy": settle.NotHealthy,
+		"inRecovery": settle.InRecovery, "pendingRestart": settle.PendingRestart, "lastBlockedMillis": settle.LastBlockedMillis})
 	return ev, nil
 }
 
@@ -600,38 +646,148 @@ func (e *Engine) demotionFinished(s *cnpg.Status) bool {
 // after the promotion. A variable so tests can shorten it.
 var settleMin = 3 * time.Second
 
+// SettleReport is what waitSettled saw (step evidence).
+type SettleReport struct {
+	Polls int `json:"polls"`
+	// Unobserved polls could not read the cluster or the database (API or
+	// connection error). They neither confirm nor break stability.
+	Unobserved int `json:"unobserved"`
+	// Restarts counts server restarts seen through pg_postmaster_start_time.
+	Restarts int `json:"restarts"`
+	// What held the settle back, in polls: the CNPG Cluster not healthy, the
+	// database still in recovery, a setting pending a restart.
+	NotHealthy     int `json:"notHealthy"`
+	InRecovery     int `json:"inRecovery"`
+	PendingRestart int `json:"pendingRestart"`
+	// LastBlockedMillis is when, after the wait began, a poll last saw one of
+	// the three; the rest of the wait is the settleMin floor and the polls.
+	LastBlockedMillis int64 `json:"lastBlockedMillis"`
+}
+
+// settleSample is one read of a promoted cluster.
+type settleSample struct {
+	healthy, inRecovery, pending bool
+	server                       time.Time // pg_postmaster_start_time; zero when not read
+}
+
+func (s settleSample) settled() bool { return s.healthy && !s.inRecovery && !s.pending }
+
 // waitSettled waits until a promoted cluster is healthy, writable and has no
-// setting pending a restart, for at least settleMin and two polls in a row.
-// CNPG restarts a new primary in place when promotion changed a setting such as
-// archive_mode; that restart is a smart shutdown, which waits for every client
-// session, so the engine drops its own pool and checks with short connections.
-func (e *Engine) waitSettled(ctx context.Context, c Cluster, dsn string, slot *Database) error {
+// setting pending a restart, for at least settleMin and two settled reads of
+// the same server process. CNPG restarts a new primary in place when promotion
+// changed a setting such as archive_mode; that restart is a smart shutdown,
+// which waits for every client session, so the engine drops its own pool and
+// checks with short connections.
+//
+// A failed read (a flaky port-forward or API blip) is not evidence of a
+// restart: the postmaster start time of the next successful read tells whether
+// the server restarted in between. Before ADR 0013 every failed read reset the
+// count, and a link that dropped every few seconds kept a settled primary
+// "unsettled" for the whole switchoverTimeout (production run 2026-11-05).
+func (e *Engine) waitSettled(ctx context.Context, c Cluster, dsn string, slot *Database) (SettleReport, error) {
 	if *slot != nil {
 		(*slot).Close()
 		*slot = nil
 	}
+	var rep SettleReport
+	var server time.Time // postmaster start of the last read that had one
 	start, stable := time.Now(), 0
 	for {
-		ok := false
-		if s, err := c.Get(ctx); err == nil && s.Healthy() {
-			if db, err := e.connect(ctx, dsn); err == nil {
-				rec, err1 := db.InRecovery(ctx)
-				pending, err2 := db.PendingRestart(ctx)
-				db.Close()
-				ok = err1 == nil && err2 == nil && !rec && !pending
+		rep.Polls++
+		s, err := e.observeSettled(ctx, c, dsn)
+		if err == nil && !s.server.IsZero() {
+			if !server.IsZero() && !s.server.Equal(server) {
+				rep.Restarts++
+				stable = 0
 			}
+			server = s.server
 		}
-		if ok {
-			stable++
-		} else {
+		switch {
+		case err != nil:
+			rep.Unobserved++
+		case !s.settled():
 			stable = 0
+			if !s.healthy {
+				rep.NotHealthy++
+			}
+			if s.inRecovery {
+				rep.InRecovery++
+			}
+			if s.pending {
+				rep.PendingRestart++
+			}
+			rep.LastBlockedMillis = time.Since(start).Milliseconds()
+		default:
+			stable++
 		}
 		if stable >= 2 && time.Since(start) >= settleMin {
-			return nil
+			return rep, nil
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return rep, ctx.Err()
+		case <-time.After(e.poll / 4):
+		}
+	}
+}
+
+// observeSettled reads one settle sample: the CNPG Cluster's health, then the
+// database's recovery, pending-restart and server start time. The database is
+// read even when the Cluster is not healthy, so the report says which of them
+// held the settle back. err means the Cluster could not be read; a database
+// that cannot be reached leaves the sample unsettled with no server time.
+func (e *Engine) observeSettled(ctx context.Context, c Cluster, dsn string) (settleSample, error) {
+	var s settleSample
+	st, err := c.Get(ctx)
+	if err != nil {
+		return s, err
+	}
+	s.healthy = st.Healthy()
+	db, err := e.connect(ctx, dsn)
+	if err != nil {
+		return s, err
+	}
+	defer db.Close()
+	if s.inRecovery, err = db.InRecovery(ctx); err != nil {
+		return s, err
+	}
+	if s.pending, err = db.PendingRestart(ctx); err != nil {
+		return s, err
+	}
+	if s.server, err = db.PostmasterStart(ctx); err != nil {
+		return s, err
+	}
+	return s, nil
+}
+
+// readRecovery reads pg_is_in_recovery() at dsn, reconnecting after failures
+// until ctx ends; the error is the last one seen.
+func (e *Engine) readRecovery(ctx context.Context, dsn string, slot *Database) (bool, error) {
+	var last error
+	for {
+		if *slot == nil {
+			db, err := e.connect(ctx, dsn)
+			if err == nil {
+				*slot = db
+			} else {
+				last = err
+			}
+		}
+		if *slot != nil {
+			rec, err := (*slot).InRecovery(ctx)
+			if err == nil {
+				return rec, nil
+			}
+			last = err
+			(*slot).Close()
+			*slot = nil
+		}
+		select {
+		case <-ctx.Done():
+			if last == nil {
+				last = ctx.Err()
+			}
+			return false, last
 		case <-time.After(e.poll / 4):
 		}
 	}

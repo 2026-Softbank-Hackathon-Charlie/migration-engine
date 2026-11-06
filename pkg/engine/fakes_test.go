@@ -37,6 +37,16 @@ type world struct {
 	restartGets      int // target cluster is unhealthy for this many Gets after promotion
 	srcRestartGets   int // source cluster is unhealthy for this many Gets after a rollback re-promotes it
 	sourceDownCalls  int // old source is unreachable for this many calls after cutover
+	// flakyConnects makes every other connection fail between the target's
+	// promotion and the cutover (a port-forward that kept dropping, 2026-11-05).
+	flakyConnects bool
+	flakyCount    int
+	promoted      bool
+	// dstConnectErrs fails this many connections to the target first (a new
+	// cluster's service not ready yet, platform E2E 2026-11-06).
+	dstConnectErrs int
+	// afterHalt changes the world between a halt and a resume attempt.
+	afterHalt func(w *world)
 
 	// Cold plans (ADR 0012).
 	app                   *fakeApp
@@ -83,6 +93,20 @@ func (w *world) connect(_ context.Context, dsn string) (Database, error) {
 	if w.connectErr != nil {
 		return nil, w.connectErr
 	}
+	w.mu.Lock()
+	flaky := w.flakyConnects && w.promoted && w.gw.routedTo != "eks"
+	if flaky {
+		w.flakyCount++
+		flaky = w.flakyCount%2 == 1
+	}
+	if dsn == "dst-dsn" && w.dstConnectErrs > 0 {
+		w.dstConnectErrs--
+		flaky = true
+	}
+	w.mu.Unlock()
+	if flaky {
+		return nil, errors.New("connection reset by peer")
+	}
 	switch dsn {
 	case "src-dsn":
 		return w.srcDB, nil
@@ -120,6 +144,7 @@ func (c *fakeCluster) Get(context.Context) (*cnpg.Status, error) {
 		if c.w.restartGets == 0 {
 			c.st.Phase = cnpg.HealthyPhase
 			c.w.dstDB.pendingRestart = false
+			c.w.dstDB.restarts++
 			c.w.calls = append(c.w.calls, "dst.restart done")
 		}
 	}
@@ -128,6 +153,7 @@ func (c *fakeCluster) Get(context.Context) (*cnpg.Status, error) {
 		if c.w.srcRestartGets == 0 {
 			c.st.Phase = cnpg.HealthyPhase
 			c.w.srcDB.pendingRestart = false
+			c.w.srcDB.restarts++
 			c.w.calls = append(c.w.calls, "src.restart done")
 		}
 	}
@@ -174,6 +200,7 @@ func (c *fakeCluster) SetPrimary(_ context.Context, primary, token string) error
 			w.srcDB.pendingRestart = true
 		}
 	case c.role == "dst" && primary == c.st.Self && token != "": // promote with token
+		w.promoted = true
 		if !w.targetNeverWakes {
 			w.dstDB.recovery = false
 		}
@@ -316,6 +343,21 @@ type fakeDB struct {
 	posErrCalls int
 
 	pendingRestart bool
+	restarts       int // the server start time moves with each restart
+	// silentRestartAt restarts the server (a new start time, nothing else
+	// visible) on this PostmasterStart call; 0 never.
+	silentRestartAt int
+	pmCalls         int
+}
+
+func (d *fakeDB) PostmasterStart(context.Context) (time.Time, error) {
+	d.w.mu.Lock()
+	defer d.w.mu.Unlock()
+	d.pmCalls++
+	if d.silentRestartAt > 0 && d.pmCalls == d.silentRestartAt {
+		d.restarts++
+	}
+	return time.Date(2026, 11, 6, 0, 0, d.restarts, 0, time.UTC), nil
 }
 
 func (d *fakeDB) InRecovery(context.Context) (bool, error) {
@@ -368,11 +410,17 @@ type fakeGateway struct {
 	routeErr   error  // returned for every route call
 	routeErrTo string // only fail routes to this backend
 	routedTo   string // last successful route, guarded by w.mu
+	held       bool   // writes held (no release since), guarded by w.mu
 }
 
 func (g *fakeGateway) Health(context.Context) error { g.w.record("gw.health"); return g.healthErr }
 func (g *fakeGateway) HoldWrites(context.Context) error {
 	g.w.record("gw.hold")
+	if g.holdErr == nil {
+		g.w.mu.Lock()
+		g.held = true
+		g.w.mu.Unlock()
+	}
 	return g.holdErr
 }
 func (g *fakeGateway) ReleaseWrites(context.Context) error {
@@ -412,9 +460,18 @@ type fakeVerifier struct {
 	w        *world
 	gateOK   bool
 	reportOK bool
+	delay    time.Duration // how long the fence gate rehearsal takes
 }
 
 func (v *fakeVerifier) FenceGate(context.Context, Database, Database) ([]verify.TableResult, bool, error) {
+	v.w.mu.Lock()
+	held := v.w.gw.held
+	v.w.mu.Unlock()
+	if !held { // delta's timing rehearsal (ADR 0013)
+		v.w.record("verify.gate.rehearsal")
+		time.Sleep(v.delay)
+		return []verify.TableResult{{Table: "public.orders", Match: true}}, true, nil
+	}
 	v.w.record("verify.gate")
 	return []verify.TableResult{{Table: "public.orders", Match: v.gateOK}}, v.gateOK, nil
 }

@@ -1,0 +1,32 @@
+run gw-src-to-dst-20261106-010423 (state: .hopcharlie\runs\gw-src-to-dst-20261106-010423.json)
+10:04:23.793 ▶ precheck
+10:04:23.844 ✔ precheck (49 ms)
+10:04:23.846 ▶ prepare
+10:04:23.849   prepare applying target manifest manifest=test/rehearsal/target.yaml
+10:04:53.888   prepare WARNING: target cluster runs 1 instance(s): until the old source has streamed them, writes after cutover live on one node only; use instances >= 2 (with synchronous replication) where losing that node is not acceptable 
+10:04:53.890 ✔ prepare (30044 ms)
+10:04:53.891 ▶ presync
+10:04:53.899   presync replication lag lagBytes=0 sourceLsn=0/4010098 targetLsn=0/4010098
+10:04:53.901 ✔ presync (9 ms)
+10:04:53.902 ▶ delta
+10:04:53.905   delta replication lag lagBytes=0 sourceLsn=0/4010098 targetLsn=0/4010098
+10:04:53.915 ✔ delta (12 ms)
+10:04:53.916 ▶ fence
+10:04:53.925   fence writes held at gateway 
+10:04:53.930 ✔ fence (13 ms)
+10:04:53.931 ▶ switchover
+10:04:53.938   switchover fence gate passed tables=1
+10:04:53.971   switchover source demotion requested newPrimary=pg-dst
+10:04:54.998   switchover target promotion requested oldPrimary=pg-src
+10:04:56.003   switchover target writable afterPromotionMillis=1027
+10:05:06.967   switchover target settled inRecovery=0 lastBlockedMillis=9915 notHealthy=9 pendingRestart=1 polls=22 restarts=1 settleMillis=10963 unobserved=11
+10:05:06.969 ✔ switchover (13038 ms)
+10:05:06.971 ↷ start-target warm mode: the target app already runs
+10:05:06.974 ▶ cutover
+10:05:06.994   cutover write downtime downtimeMillis=13068
+10:05:06.997 ✔ cutover (22 ms)
+10:05:06.999 ▶ verify
+10:05:07.044 ✔ verify (45 ms)
+10:05:07.046 ▶ finalize
+10:05:07.057 ✔ finalize (11 ms)
+10:05:07.059 ★ migration succeeded downtimeMillis=13068

@@ -1,0 +1,17 @@
+{
+  "failed": 0,
+  "latencyMs": {
+    "max": 37747,
+    "p50": 4,
+    "p99": 23
+  },
+  "ok": 1211,
+  "statuses": {
+    "200": 1211
+  },
+  "total": 1211,
+  "writesByDB": {
+    "pg-dst": 422,
+    "pg-src": 789
+  }
+}

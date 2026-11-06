@@ -291,6 +291,67 @@ func (e *Engine) RunStep(ctx context.Context, name string) error {
 	return nil
 }
 
+// ResumeHalted lets an operator continue a run that halted after the target's
+// promotion was requested (ADR 0013). The engine halts there because it cannot
+// tell, by itself, which side is primary. Here it checks that the promotion
+// went through and nothing else is primary: the target is the topology
+// primary, writable and settled; the source follows the target and runs in
+// recovery. Then the switchover counts as done and Run carries on from the
+// first unfinished step (cutover releases the held writes on the target).
+// Any doubt keeps the run halted with the reason.
+func (e *Engine) ResumeHalted(ctx context.Context) error {
+	st := e.State()
+	if st.Outcome != OutcomeHalted {
+		return fmt.Errorf("run %s is %s, not halted", st.RunID, st.Outcome)
+	}
+	if !st.PromoteRequested || !st.SourceDemoted {
+		return fmt.Errorf("run %s halted before the target's promotion (%s: %s); this needs an operator, not a resume", st.RunID, st.FailureStep, st.FailureError)
+	}
+	cctx, cancel := context.WithTimeout(ctx, e.plan.Thresholds.SwitchoverTimeout.Duration)
+	defer cancel()
+	ev := map[string]any{"haltedAt": st.FailureStep, "haltError": st.FailureError}
+
+	d, err := e.dst.Get(cctx)
+	if err != nil {
+		return fmt.Errorf("read target cluster: %w", err)
+	}
+	if !d.IsPrimary() {
+		return fmt.Errorf("target is not the topology primary (replica.primary=%q, self=%q); not resuming", d.ReplicaPrimary, d.Self)
+	}
+	s, err := e.src.Get(cctx)
+	if err != nil {
+		return fmt.Errorf("read source cluster: %w", err)
+	}
+	if s.ReplicaPrimary != d.Self {
+		return fmt.Errorf("source does not follow the target (replica.primary=%q, want %q); not resuming", s.ReplicaPrimary, d.Self)
+	}
+	if err := e.waitRecovery(cctx, e.plan.Source.DSN, &e.srcDB, true); err != nil {
+		return fmt.Errorf("cannot confirm the source runs as a replica: %w", err)
+	}
+	if err := e.waitWritable(cctx, e.plan.Target.DSN, &e.dstDB); err != nil {
+		return fmt.Errorf("target is not writable: %w", err)
+	}
+	rep, err := e.waitSettled(cctx, e.dst, e.plan.Target.DSN, &e.dstDB)
+	ev["settle"] = rep
+	if err != nil {
+		return fmt.Errorf("target did not settle: %w", err)
+	}
+
+	now := time.Now().UTC()
+	e.mu.Lock()
+	if rec := e.state.Steps[StepSwitchover]; rec.Status != StatusSucceeded {
+		prev := rec.Evidence
+		rec.Status, rec.Error, rec.EndedAt = StatusSucceeded, "", &now
+		rec.Evidence = map[string]any{"resumedAfterHalt": ev, "before": prev}
+	}
+	e.state.Outcome = OutcomeRunning
+	e.state.FailureStep, e.state.FailureError = "", ""
+	e.mu.Unlock()
+	e.save()
+	e.log(st.FailureStep, "resumed after halt: target is primary and settled, source follows it", map[string]any{"haltedAt": st.FailureStep})
+	return nil
+}
+
 func (e *Engine) checkRunnable() error {
 	switch e.state.Outcome {
 	case OutcomeRunning:
@@ -483,10 +544,11 @@ func (e *Engine) rollback(ctx context.Context) error {
 		// promoted target (ADR 0009); releasing writes before that restart
 		// sends them to a primary that is shutting down.
 		start := time.Now()
-		if err := e.waitSettled(ctx, e.src, e.plan.Source.DSN, &e.srcDB); err != nil {
+		rep, err := e.waitSettled(ctx, e.src, e.plan.Source.DSN, &e.srcDB)
+		if err != nil {
 			return fmt.Errorf("source did not settle after re-promotion: %w", err)
 		}
-		e.log(StepSwitchover, "source settled", map[string]any{"settleMillis": time.Since(start).Milliseconds()})
+		e.log(StepSwitchover, "source settled", map[string]any{"settleMillis": time.Since(start).Milliseconds(), "unobservedPolls": rep.Unobserved, "restarts": rep.Restarts})
 		e.mu.Lock()
 		e.state.SourceDemoted = false
 		e.mu.Unlock()
@@ -572,10 +634,11 @@ func (e *Engine) rollbackPromoted(ctx context.Context) error {
 		return fmt.Errorf("source did not become writable again: %w", err)
 	}
 	start := time.Now()
-	if err := e.waitSettled(ctx, e.src, e.plan.Source.DSN, &e.srcDB); err != nil {
+	rep, err := e.waitSettled(ctx, e.src, e.plan.Source.DSN, &e.srcDB)
+	if err != nil {
 		return fmt.Errorf("source did not settle after re-promotion: %w", err)
 	}
-	e.log(step, "source settled", map[string]any{"settleMillis": time.Since(start).Milliseconds()})
+	e.log(step, "source settled", map[string]any{"settleMillis": time.Since(start).Milliseconds(), "unobservedPolls": rep.Unobserved, "restarts": rep.Restarts})
 	e.setFlags(func(s *State) { s.SourceDemoted = false })
 
 	// 4. The target follows the source again, so the next attempt starts from

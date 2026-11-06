@@ -1,0 +1,54 @@
+######## run 1 smartShutdownTimeout=5
+   smartShutdownTimeout 5s
+   OK   outcome=succeeded
+   OK   outcome=rolled_back
+   OK   no acknowledged write is missing
+   OK   no failed request
+== all scenarios passed
+10:15:17.432   switchover source demotion requested newPrimary=pg-dst
+10:15:18.457   switchover target promotion requested oldPrimary=pg-src
+10:15:19.463   switchover target writable afterPromotionMillis=1026
+10:15:30.800   switchover target settled inRecovery=0 lastBlockedMillis=10303 notHealthy=10 pendingRestart=1 polls=23 restarts=1 settleMillis=11337 unobserved=11
+10:15:30.823   cutover write downtime downtimeMillis=13432
+10:15:30.879 ★ migration succeeded downtimeMillis=13432
+######## run 2 smartShutdownTimeout=1
+   smartShutdownTimeout 1s
+   OK   outcome=succeeded
+   OK   outcome=rolled_back
+   OK   no acknowledged write is missing
+   OK   no failed request
+== all scenarios passed
+10:17:50.612   switchover source demotion requested newPrimary=pg-dst
+10:17:51.639   switchover target promotion requested oldPrimary=pg-src
+10:17:52.644   switchover target writable afterPromotionMillis=1027
+10:17:58.885   switchover target settled inRecovery=0 lastBlockedMillis=5205 notHealthy=8 pendingRestart=1 polls=13 restarts=1 settleMillis=6240 unobserved=3
+10:17:58.912   cutover write downtime downtimeMillis=8359
+10:17:58.968 ★ migration succeeded downtimeMillis=8359
+######## run 3 smartShutdownTimeout=5
+   smartShutdownTimeout 5s
+   OK   outcome=succeeded
+   OK   outcome=rolled_back
+   OK   no acknowledged write is missing
+   OK   no failed request
+== all scenarios passed
+10:20:08.911   switchover source demotion requested newPrimary=pg-dst
+10:20:09.945   switchover target promotion requested oldPrimary=pg-src
+10:20:10.951   switchover target writable afterPromotionMillis=1035
+10:20:21.787   switchover target settled inRecovery=0 lastBlockedMillis=9788 notHealthy=10 pendingRestart=1 polls=22 restarts=1 settleMillis=10835 unobserved=10
+10:20:21.809   cutover write downtime downtimeMillis=12938
+10:20:21.877 ★ migration succeeded downtimeMillis=12938
+######## run 4 smartShutdownTimeout=1
+   smartShutdownTimeout 1s
+   OK   outcome=succeeded
+   OK   outcome=rolled_back
+   OK   no acknowledged write is missing
+   OK   no failed request
+== all scenarios passed
+10:22:39.578   switchover source demotion requested newPrimary=pg-dst
+10:22:40.646   switchover target promotion requested oldPrimary=pg-src
+10:22:41.652   switchover target writable afterPromotionMillis=1069
+10:22:47.928   switchover target settled inRecovery=0 lastBlockedMillis=5240 notHealthy=8 pendingRestart=1 polls=13 restarts=1 settleMillis=6276 unobserved=3
+10:22:47.951   cutover write downtime downtimeMillis=8421
+10:22:48.008 ★ migration succeeded downtimeMillis=8421
+
+[exited with code 0]

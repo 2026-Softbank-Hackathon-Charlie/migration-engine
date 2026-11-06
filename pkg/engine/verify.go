@@ -18,12 +18,15 @@ type Report struct {
 	MissingRows int64                  `json:"missingRows"`
 	Written     *verify.WrittenResult  `json:"written,omitempty"`
 	Files       *files.CheckResult     `json:"files,omitempty"`
+	// This engine uses asynchronous cross-environment replication. A successful
+	// comparison does not prove durability after losing the primary environment.
+	Durability string `json:"durability"`
 }
 
 // Verify runs the post-cutover checks. It is also usable standalone (CLI `verify`).
 // rc may be nil when files are not migrated.
 func Verify(ctx context.Context, p *plan.Plan, src, dst *pg.DB, rc FileSyncer) (*Report, error) {
-	rep := &Report{}
+	rep := &Report{Durability: "asynchronous; planned return requires reachable primary and WAL; environment-loss RPO=0 unsupported"}
 	tables, err := verify.ListTables(ctx, src.Pool, p.Verify.Schemas, p.Verify.Tables)
 	if err != nil {
 		return rep, fmt.Errorf("list tables: %w", err)

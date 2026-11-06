@@ -1,0 +1,6 @@
+go : go: -race requires cgo; enable cgo by setting CGO_ENABLED=1
+위치 줄:2 문자:327
++ ... cords/2026-11-06-issue-19/build.log; go test -race ./... 2>&1 | Tee-O ...
++                                          ~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (go: -race requi...g CGO_ENABLED=1:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError

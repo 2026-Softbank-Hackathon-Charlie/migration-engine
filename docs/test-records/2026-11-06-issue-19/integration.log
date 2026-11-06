@@ -1,0 +1,5 @@
+=== RUN   TestAcknowledgedUpdateDeleteAndTransactionFinalState
+    written_state_integration_test.go:13: HOPCHARLIE_IT_PRIMARY_DSN not set; run test/integration/run.sh
+--- SKIP: TestAcknowledgedUpdateDeleteAndTransactionFinalState (0.00s)
+PASS
+ok  	github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/verify	0.160s

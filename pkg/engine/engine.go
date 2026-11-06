@@ -304,6 +304,11 @@ func (e *Engine) ResumeHalted(ctx context.Context) error {
 	if st.Outcome != OutcomeHalted {
 		return fmt.Errorf("run %s is %s, not halted", st.RunID, st.Outcome)
 	}
+	for _, step := range []string{StepFence, StepStartTarget, StepCutover} {
+		if st.Steps[step].Status == StatusRunning {
+			return fmt.Errorf("interrupted %s requires operator reconciliation; refusing automatic resume", step)
+		}
+	}
 	if !st.PromoteRequested || !st.SourceDemoted {
 		return fmt.Errorf("run %s halted before the target's promotion (%s: %s); this needs an operator, not a resume", st.RunID, st.FailureStep, st.FailureError)
 	}
@@ -353,6 +358,22 @@ func (e *Engine) ResumeHalted(ctx context.Context) error {
 }
 
 func (e *Engine) checkRunnable() error {
+	// A process may die after an external request was applied but before its
+	// result was saved. Never replay an interrupted step across the fence.
+	if e.state.Outcome == OutcomeRunning {
+		for _, step := range Steps {
+			if e.state.Steps[step].Status == StatusRunning && slices.Contains([]string{StepFence, StepSwitchover, StepStartTarget, StepCutover}, step) {
+				e.mu.Lock()
+				e.state.Outcome = OutcomeHalted
+				e.state.FailureStep = step
+				e.state.FailureError = "process interrupted during safety-critical step; reconcile observed cluster and gateway state before continuing"
+				e.mu.Unlock()
+				e.save()
+				e.emit(step, EventHalt, e.state.FailureError, nil)
+				return fmt.Errorf("run %s halted: %s", e.state.RunID, e.state.FailureError)
+			}
+		}
+	}
 	switch e.state.Outcome {
 	case OutcomeRunning:
 		return nil

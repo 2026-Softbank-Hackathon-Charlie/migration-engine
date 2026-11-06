@@ -1,0 +1,5 @@
+﻿services:
+  primary:
+    ports: !reset []
+  standby:
+    ports: !reset []

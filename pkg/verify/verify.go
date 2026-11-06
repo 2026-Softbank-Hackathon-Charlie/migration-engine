@@ -229,6 +229,10 @@ func pkList(ctx context.Context, db *pgxpool.Pool, t Table) ([]string, error) {
 type WrittenRecord struct {
 	Table string `json:"table"` // "orders" or "public.orders"
 	PK    string `json:"pk"`    // as text; composite keys as "(1,abc)"
+	// Expected is the final row as to_jsonb(row)::text; absent proves a DELETE.
+	// Supply only the last acknowledged state per key after writers stop.
+	Expected json.RawMessage `json:"expected,omitempty"`
+	Absent   bool            `json:"absent,omitempty"`
 }
 
 // WrittenResult is the k6 success-log check.
@@ -263,6 +267,12 @@ func ReadWritten(path string) ([]WrittenRecord, error) {
 		if w.Table == "" || w.PK == "" {
 			return nil, fmt.Errorf("%s:%d: table and pk are required", path, line)
 		}
+		if w.Absent && len(w.Expected) != 0 {
+			return nil, fmt.Errorf("%s:%d: absent and expected are mutually exclusive", path, line)
+		}
+		if len(w.Expected) != 0 && (!json.Valid(w.Expected) || strings.TrimSpace(string(w.Expected))[0] != '{') {
+			return nil, fmt.Errorf("%s:%d: expected must be a JSON object", path, line)
+		}
 		out = append(out, w)
 	}
 	return out, sc.Err()
@@ -279,9 +289,43 @@ func CheckWritten(ctx context.Context, dst *pgxpool.Pool, tables []Table, recs [
 	}
 	group := map[string][]string{}
 	for _, r := range recs {
+		if r.Absent || len(r.Expected) != 0 {
+			continue
+		}
 		group[r.Table] = append(group[r.Table], r.PK)
 	}
 	var res WrittenResult
+	for _, r := range recs {
+		if !r.Absent && len(r.Expected) == 0 {
+			continue
+		}
+		t, ok := byName[r.Table]
+		if !ok || len(t.PK) == 0 {
+			res.Errors = append(res.Errors, r.Table+": unknown table or no primary key")
+			res.Missing++
+			continue
+		}
+		var count int64
+		var matches bool
+		query := fmt.Sprintf("SELECT count(*), coalesce(bool_and(to_jsonb(t) = $2::jsonb), false) FROM %s AS t WHERE %s = $1", t.Ident(), pkExpr(t))
+		expected := string(r.Expected)
+		if expected == "" {
+			expected = "null"
+		}
+		err := dst.QueryRow(ctx, query, r.PK, expected).Scan(&count, &matches)
+		if err != nil {
+			res.Errors = append(res.Errors, r.Table+": "+err.Error())
+			res.Missing++
+			continue
+		}
+		res.Checked++
+		if (r.Absent && count != 0) || (!r.Absent && (count != 1 || !matches)) {
+			res.Missing++
+			if len(res.Samples) < maxSamples {
+				res.Samples = append(res.Samples, t.String()+":"+r.PK)
+			}
+		}
+	}
 	for name, pks := range group {
 		t, ok := byName[name]
 		if !ok || len(t.PK) == 0 {

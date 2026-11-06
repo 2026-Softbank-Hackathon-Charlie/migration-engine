@@ -1,0 +1,59 @@
+go: downloading github.com/jackc/pgx/v5 v5.12.0
+go: downloading github.com/jackc/pgpassfile v1.0.0
+go: downloading golang.org/x/text v0.41.0
+go: downloading github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761
+go: downloading github.com/jackc/puddle/v2 v2.2.3
+go: downloading golang.org/x/sync v0.22.0
+=== RUN   TestRecoveryState
+--- PASS: TestRecoveryState (0.07s)
+=== RUN   TestLSNDiff
+--- PASS: TestLSNDiff (0.03s)
+=== RUN   TestLagCatchesUp
+    pg_integration_test.go:102: standby replayed past fence 0/33B6AF0 (src 0/3400000, dst 0/33D2778, lag 186504)
+--- PASS: TestLagCatchesUp (0.47s)
+=== RUN   TestClientSessions
+--- PASS: TestClientSessions (0.08s)
+PASS
+ok  	github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/pg	0.670s
+=== RUN   TestQueries
+--- PASS: TestQueries (0.00s)
+=== RUN   TestReadWritten
+--- PASS: TestReadWritten (0.00s)
+=== RUN   TestReadWrittenFinalState
+=== RUN   TestReadWrittenFinalState/{"table":"orders","pk":"1"}
+=== RUN   TestReadWrittenFinalState/{"table":"orders","pk":"1","expected":{"id":1,"total":2}}
+=== RUN   TestReadWrittenFinalState/{"table":"orders","pk":"1","absent":true}
+=== RUN   TestReadWrittenFinalState/{"table":"orders","pk":"1","absent":true,"expected":{}}
+=== RUN   TestReadWrittenFinalState/{"table":"orders","pk":"1","expected":[]}
+=== RUN   TestReadWrittenFinalState/{"table":"orders","pk":"1","expected":null}
+--- PASS: TestReadWrittenFinalState (0.02s)
+    --- PASS: TestReadWrittenFinalState/{"table":"orders","pk":"1"} (0.00s)
+    --- PASS: TestReadWrittenFinalState/{"table":"orders","pk":"1","expected":{"id":1,"total":2}} (0.00s)
+    --- PASS: TestReadWrittenFinalState/{"table":"orders","pk":"1","absent":true} (0.01s)
+    --- PASS: TestReadWrittenFinalState/{"table":"orders","pk":"1","absent":true,"expected":{}} (0.00s)
+    --- PASS: TestReadWrittenFinalState/{"table":"orders","pk":"1","expected":[]} (0.00s)
+    --- PASS: TestReadWrittenFinalState/{"table":"orders","pk":"1","expected":null} (0.00s)
+=== RUN   TestListTablesFindsPrimaryKeys
+--- PASS: TestListTablesFindsPrimaryKeys (2.68s)
+=== RUN   TestCompareTablesMatchesIdenticalData
+--- PASS: TestCompareTablesMatchesIdenticalData (1.59s)
+=== RUN   TestCompareTablesDetectsDifferences
+=== RUN   TestCompareTablesDetectsDifferences/changed_value
+=== RUN   TestCompareTablesDetectsDifferences/missing_row
+=== RUN   TestCompareTablesDetectsDifferences/extra_row
+=== RUN   TestCompareTablesDetectsDifferences/table_without_PK
+--- PASS: TestCompareTablesDetectsDifferences (1.73s)
+    --- PASS: TestCompareTablesDetectsDifferences/changed_value (0.67s)
+    --- PASS: TestCompareTablesDetectsDifferences/missing_row (0.38s)
+    --- PASS: TestCompareTablesDetectsDifferences/extra_row (0.34s)
+    --- PASS: TestCompareTablesDetectsDifferences/table_without_PK (0.34s)
+=== RUN   TestMissingRows
+--- PASS: TestMissingRows (0.47s)
+=== RUN   TestCheckWritten
+--- PASS: TestCheckWritten (0.35s)
+=== RUN   TestMissingRowsWithSourceFollowingTarget
+--- PASS: TestMissingRowsWithSourceFollowingTarget (0.18s)
+=== RUN   TestAcknowledgedUpdateDeleteAndTransactionFinalState
+--- PASS: TestAcknowledgedUpdateDeleteAndTransactionFinalState (0.39s)
+PASS
+ok  	github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/verify	7.410s

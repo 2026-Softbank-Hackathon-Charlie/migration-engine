@@ -1,0 +1,72 @@
+?   	github.com/2026-Softbank-Hackathon-Charlie/platform/api	[no test files]
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/cmd/api	11.741s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/cmd/gateway	1.390s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/agentlog	2.129s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/airun	3.168s
+2026/11/06 14:17:56 ERROR engine init failed err="could not initialize the migration engine: context \"nope\" does not exist in /home/secret/.kube/config"
+2026/11/06 14:18:00 WARN github err="connection refused" path=/v1/apps
+2026/11/06 14:18:02 WARN github err=timeout path=/v1/apps/validate
+2026/11/06 14:18:02 WARN github err=boom path=/v1/github/repos
+2026/11/06 14:18:11 WARN github err="github: the App's installation cannot grant a token for the repository: acme/imported" path=/v1/github/push-tokens
+2026/11/06 14:18:12 ERROR GitHub answered a push token request with a wider token; it was revoked repo=acme/imported err="github: the token GitHub created has a wider scope than asked for: all"
+2026/11/06 14:18:12 WARN github err=boom path=/v1/github/push-tokens
+2026/11/06 14:18:13 WARN github err=boom path=/v1/github/push-tokens
+2026/11/06 14:18:14 ERROR audit log write failed err="audit log is down" action="POST /v1/github/push-tokens" actor=ai
+2026/11/06 14:18:14 ERROR audit log write failed err="audit log is down" action="POST /v1/github/push-tokens" actor=ai
+2026/11/06 14:18:14 ERROR audit log write failed err="audit log is down" action="POST /v1/github/push-tokens" actor=ai
+2026/11/06 14:18:14 ERROR could not revoke a push token that was not handed out; it expires within the hour repo=acme/imported err="revoke failed"
+2026/11/06 14:18:14 ERROR audit log write failed err="audit log is down" action="POST /v1/github/push-tokens" actor=ai
+2026/11/06 14:18:23 WARN github err="connection reset" path=/v1/apps/shop/deployments
+2026/11/06 14:18:25 WARN github err="gitops repository" path=/v1/apps/shop
+2026/11/06 14:18:25 WARN gateway err="traffic gateway"
+2026/11/06 14:18:26 ERROR internal error err="connection reset" path=/v1/apps/shop/instances
+2026/11/06 14:18:27 ERROR webhook: read the branches of an app app=shop-manual delivery=d-1 err="connection reset"
+2026/11/06 14:18:27 ERROR webhook: read the branches of an app app=shop delivery=d-2 err="connection reset"
+2026/11/06 14:18:27 ERROR webhook: read the branches of an app app=shop-manual delivery=d-2 err="connection reset"
+2026/11/06 14:18:27 ERROR internal error err="connection reset" path=/v1/webhooks/github
+2026/11/06 14:18:27 WARN github err="connection refused" path=/v1/apps/shop/instances
+2026/11/06 14:18:28 WARN github err="gitops repository" path=/v1/apps/shop/instances/shop--dev
+2026/11/06 14:18:28 WARN gateway err="traffic gateway"
+--- FAIL: TestRedeployEnvironments (0.35s)
+    redeploy_test.go:113: redeploy went to [{Env:gke HealthStatus:<nil> Message:<nil> Status:pending SyncStatus:<nil> Url:<nil>} {Env:eks HealthStatus:<nil> Message:<nil> Status:pending SyncStatus:<nil> Url:<nil>}]
+2026/11/06 14:18:41 ERROR audit log write failed err="audit log is down" action="GET /v1/apps/{name}/secrets/{secret}" actor=op
+FAIL
+FAIL	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/api	70.561s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/apps	1.313s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/auth	11.931s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/deploy	34.090s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/envs	3.087s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/gateway	12.540s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/github	1.623s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/plans	1.416s
+?   	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight	[no test files]
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/bucketprobe	6.066s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/capacity	1.217s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/gate	2.002s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/inventory	1.159s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/parity	1.114s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/paritygate	1.910s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/pgversion	1.134s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/probes	2.159s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/residency	3.694s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/runs	1.240s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/sealing	1.898s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/secrets	1.057s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/security	5.832s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/storage	2.817s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/store	1.076s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/store/storetest	1.267s
+?   	github.com/2026-Softbank-Hackathon-Charlie/platform/pkg/apiv1	[no test files]
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/pkg/appspec	1.983s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/pkg/client	2.135s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/test/charts	2.560s
+?   	github.com/2026-Softbank-Hackathon-Charlie/platform/test/e2e/app	[no test files]
+?   	github.com/2026-Softbank-Hackathon-Charlie/platform/test/e2e/deploy/driver	[no test files]
+?   	github.com/2026-Softbank-Hackathon-Charlie/platform/test/e2e/deploy/fakegithub	[no test files]
+?   	github.com/2026-Softbank-Hackathon-Charlie/platform/test/e2e/deploy/gitserver	[no test files]
+?   	github.com/2026-Softbank-Hackathon-Charlie/platform/test/e2e/deploy/probe	[no test files]
+?   	github.com/2026-Softbank-Hackathon-Charlie/platform/test/e2e/deploy/proxy	[no test files]
+?   	github.com/2026-Softbank-Hackathon-Charlie/platform/test/e2e/driver	[no test files]
+?   	github.com/2026-Softbank-Hackathon-Charlie/platform/test/e2e/moimroom/driver	[no test files]
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/tools/apidoc	1.792s
+FAIL

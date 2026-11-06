@@ -1,0 +1,12 @@
+go: downloading github.com/2026-Softbank-Hackathon-Charlie/migration-engine v0.0.0-20261106021617-5913052ab3a5
+--- FAIL: TestRedeployEnvironments (0.30s)
+    redeploy_test.go:113: redeploy went to [{Env:gke HealthStatus:<nil> Message:<nil> Status:pending SyncStatus:<nil> Url:<nil>} {Env:eks HealthStatus:<nil> Message:<nil> Status:pending SyncStatus:<nil> Url:<nil>}]
+--- FAIL: TestRedeployEnvironments (0.37s)
+    redeploy_test.go:113: redeploy went to [{Env:gke HealthStatus:<nil> Message:<nil> Status:pending SyncStatus:<nil> Url:<nil>} {Env:eks HealthStatus:<nil> Message:<nil> Status:pending SyncStatus:<nil> Url:<nil>}]
+--- FAIL: TestRedeployEnvironments (0.38s)
+    redeploy_test.go:113: redeploy went to [{Env:gke HealthStatus:<nil> Message:<nil> Status:pending SyncStatus:<nil> Url:<nil>} {Env:eks HealthStatus:<nil> Message:<nil> Status:pending SyncStatus:<nil> Url:<nil>}]
+--- FAIL: TestRedeployEnvironments (0.37s)
+    redeploy_test.go:113: redeploy went to [{Env:gke HealthStatus:<nil> Message:<nil> Status:pending SyncStatus:<nil> Url:<nil>} {Env:eks HealthStatus:<nil> Message:<nil> Status:pending SyncStatus:<nil> Url:<nil>}]
+FAIL
+FAIL	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/api	11.105s
+FAIL

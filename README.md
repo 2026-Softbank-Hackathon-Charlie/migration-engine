@@ -1,5 +1,18 @@
 # migration-engine
 
+### 롤백의 쓰기 보존 범위
+
+정상 복귀는 새 primary가 살아 있고 마지막 WAL을 전달할 수 있을 때 역방향 이전으로 수행합니다. 교차 환경 복제는 비동기이므로 primary 환경/저장소 유실에 대한 RPO=0은 지원하지 않습니다. gateway 밖 writer는 중지·차단하고 진행 중 트랜잭션 종료를 확인해야 합니다. [계약과 제외 범위](docs/adr/0015-rollback-acknowledged-writes.md)를 참고하세요.
+
+`verify.writtenRecords` JSONL은 기존 `table`/`pk` 존재 검사 외에 최종 UPDATE 상태와 DELETE를 지원합니다. writer를 멈춘 뒤 키마다 마지막 성공 상태 하나를 기록하세요. `expected`는 전체 행 JSON이고 `absent`와 함께 쓸 수 없습니다. 결과 불명 요청은 별도 기록합니다.
+
+```jsonl
+{"table":"public.orders","pk":"1","expected":{"id":1,"total":200,"note":"updated"}}
+{"table":"public.orders","pk":"2","absent":true}
+```
+
+기존 `test/rehearsal/run.sh`에 전환 후 트랜잭션의 INSERT/UPDATE/DELETE, replica replay 지연, 역방향 이전 후 최종 상태 비교를 포함했습니다. runner의 독립 기록은 `$work/acknowledged*`에 남습니다. PK는 행 중복을 막지만 외부 부작용의 exactly-once까지 증명하지 않습니다. 안전 단계 실행 중 재시작은 자동 재실행 대신 halt하며, 승격 중 중단만 기존 `resume`의 실상태 검증으로 재개할 수 있습니다.
+
 가동 중인 서비스의 **DB(CNPG)와 파일(S3)** 을 다른 클러스터로 옮기는 HopCharlie의 이전 엔진입니다.
 AI가 만든 Plan을 사람이 승인하면, 엔진이 정해진 순서대로만 실행하고 **누락 0건**을 증거로 남깁니다.
 

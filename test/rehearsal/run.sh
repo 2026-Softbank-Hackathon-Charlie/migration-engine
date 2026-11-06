@@ -79,8 +79,32 @@ scenario() {
 }
 
 scenario "1. migrate pg-src -> pg-dst" "$here/plan.json" succeeded pg-dst pg-src
+
+# Independent acknowledgement oracle: retained on the runner, never replicated.
+# This deliberately uses a direct DB writer in the disposable rehearsal only;
+# it exits before the reverse migration fences writers. No production contexts.
+echo "== acknowledged INSERT/UPDATE/DELETE transaction after cutover"
+k exec pg-src-1 -c postgres -- psql -q -d app -v ON_ERROR_STOP=1 -c 'SELECT pg_wal_replay_pause()' >/dev/null
+k exec pg-dst-1 -c postgres -- psql -q -d app -v ON_ERROR_STOP=1 -c "SET ROLE app;
+ BEGIN;
+ INSERT INTO orders(id,total,note) SELECT 100000+g, g, 'ack-'||g FROM generate_series(1,100) g;
+ UPDATE orders SET total=total+100, note='ack-update-'||id WHERE id BETWEEN 1 AND 100;
+ DELETE FROM orders WHERE id BETWEEN 101 AND 200;
+ COMMIT;" >"$work/ack-transaction.out"
+# Only reached after psql received a successful COMMIT result. Failure or lost
+# response aborts this scenario, never counts as an acknowledged transaction.
+printf '%s\n' 'acknowledged transaction: insert 100, update 100, delete 100' >"$work/acknowledged.log"
+oracle_sql="SELECT id,total,note FROM orders WHERE id BETWEEN 1 AND 200 OR id BETWEEN 100001 AND 100100 ORDER BY id"
+k exec pg-dst-1 -c postgres -- psql -tA -d app -v ON_ERROR_STOP=1 -c "$oracle_sql" >"$work/acknowledged-final-state.txt"
+# Prove lag was injected before allowing the old environment to catch up.
+lag=$(k exec pg-src-1 -c postgres -- psql -tA -d app -v ON_ERROR_STOP=1 -c 'SELECT pg_is_wal_replay_paused()')
+[ "$lag" = t ] || { echo 'FAIL replay was not paused'; exit 1; }
+k exec pg-src-1 -c postgres -- psql -q -d app -v ON_ERROR_STOP=1 -c 'SELECT pg_wal_replay_resume()' >/dev/null
 scenario "2. back, but switchover times out right after demotion -> rolled back" "$here/plan-timeout.json" rolled_back pg-dst pg-src
 scenario "3. migrate pg-dst -> pg-src" "$here/plan-back.json" succeeded pg-src pg-dst
+k exec pg-src-1 -c postgres -- psql -tA -d app -v ON_ERROR_STOP=1 -c "$oracle_sql" >"$work/returned-final-state.txt"
+diff -u "$work/acknowledged-final-state.txt" "$work/returned-final-state.txt"
+echo '== acknowledged INSERT/UPDATE/DELETE final states preserved after return (PK prevents duplicate rows)'
 scenario "4. migrate pg-src -> pg-dst again (old demotion token in status)" "$here/plan.json" succeeded pg-dst pg-src
 
 [ "$fail" = 0 ] && echo "== all scenarios passed" || { echo "== FAILED"; exit 1; }

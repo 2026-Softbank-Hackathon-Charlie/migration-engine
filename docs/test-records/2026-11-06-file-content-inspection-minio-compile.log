@@ -1,0 +1,4 @@
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/gate	0.066s [no tests to run]
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/bucketprobe	0.054s [no tests to run]
+
+Exit code: 0

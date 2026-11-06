@@ -1,0 +1,16 @@
+Date: 2026-11-06
+Purpose: retain toolchain discovery failures after switching to manual permission mode
+This is a transcription of the prior PowerShell tool response, not a newly executed command log.
+
+Attempted: git -C platform status --short; go version; Get-Command gofmt | Select-Object -ExpandProperty Source
+- git status executed successfully.
+- go version did not start: The term 'go' is not recognized as the name of a cmdlet, function, script file, or operable program.
+- Get-Command gofmt also failed to resolve the command on PATH.
+
+Dedicated filesystem search located:
+C:\Program Files\Go\bin\go.exe
+C:\Program Files\Go\bin\gofmt.exe
+
+Resolution: prepend this directory only to each verification subprocess PATH.
+No persistent settings, permission files, global PATH, or repository configuration were changed.
+Actual subsequent version output is preserved in 2026-11-06-file-content-inspection-toolchain.log.

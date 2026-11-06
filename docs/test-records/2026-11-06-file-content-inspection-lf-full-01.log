@@ -1,0 +1,46 @@
+?   	github.com/2026-Softbank-Hackathon-Charlie/platform/api	[no test files]
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/cmd/api	1.987s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/cmd/gateway	6.736s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/agentlog	5.673s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/airun	8.922s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/api	16.803s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/apps	3.790s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/auth	2.711s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/deploy	26.793s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/envs	0.827s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/fileguard	4.188s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/gateway	14.128s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/github	3.129s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/plans	2.728s
+?   	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight	[no test files]
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/bucketprobe	6.999s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/capacity	2.938s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/gate	0.578s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/inventory	2.486s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/parity	1.218s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/paritygate	0.449s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/pgversion	2.010s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/probes	0.393s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/residency	0.811s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/runs	0.223s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/sealing	0.708s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/secrets	0.050s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/security	2.051s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/storage	1.308s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/store	0.047s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/store/storetest	0.053s
+?   	github.com/2026-Softbank-Hackathon-Charlie/platform/pkg/apiv1	[no test files]
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/pkg/appspec	0.209s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/pkg/client	0.471s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/test/charts	0.994s
+?   	github.com/2026-Softbank-Hackathon-Charlie/platform/test/e2e/app	[no test files]
+?   	github.com/2026-Softbank-Hackathon-Charlie/platform/test/e2e/deploy/driver	[no test files]
+?   	github.com/2026-Softbank-Hackathon-Charlie/platform/test/e2e/deploy/fakegithub	[no test files]
+?   	github.com/2026-Softbank-Hackathon-Charlie/platform/test/e2e/deploy/gitserver	[no test files]
+?   	github.com/2026-Softbank-Hackathon-Charlie/platform/test/e2e/deploy/probe	[no test files]
+?   	github.com/2026-Softbank-Hackathon-Charlie/platform/test/e2e/deploy/proxy	[no test files]
+?   	github.com/2026-Softbank-Hackathon-Charlie/platform/test/e2e/driver	[no test files]
+?   	github.com/2026-Softbank-Hackathon-Charlie/platform/test/e2e/moimroom/driver	[no test files]
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/tools/apidoc	0.123s
+
+Exit code: 0

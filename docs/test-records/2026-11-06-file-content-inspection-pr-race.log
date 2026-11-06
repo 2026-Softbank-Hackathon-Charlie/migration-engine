@@ -1,0 +1,19 @@
+PR commit 7b6886045f7383e595bbe4ec980e0e711e1b20cb; base eba119b3f6c3230aac3cd2ab0cf27c2c67e6fddd
+go: downloading github.com/2026-Softbank-Hackathon-Charlie/migration-engine v0.0.0-20261106053317-a1dc35c2261c
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/fileguard	8.992s
+?   	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight	[no test files]
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/bucketprobe	5.439s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/capacity	1.372s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/gate	3.113s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/inventory	1.509s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/parity	1.116s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/paritygate	2.541s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/pgversion	1.690s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/probes	2.610s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/residency	3.854s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/runs	2.399s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/plans	1.638s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/api	87.607s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/cmd/api	9.786s
+
+Exit code: 0

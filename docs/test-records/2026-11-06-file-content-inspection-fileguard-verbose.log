@@ -1,0 +1,67 @@
+=== RUN   TestTextAndZIPFindings
+=== RUN   TestTextAndZIPFindings/nested
+=== RUN   TestTextAndZIPFindings/text
+=== RUN   TestTextAndZIPFindings/zip
+--- PASS: TestTextAndZIPFindings (0.03s)
+    --- PASS: TestTextAndZIPFindings/nested (0.02s)
+    --- PASS: TestTextAndZIPFindings/text (0.00s)
+    --- PASS: TestTextAndZIPFindings/zip (0.01s)
+=== RUN   TestUnsupportedBytesRequireExactReview
+--- PASS: TestUnsupportedBytesRequireExactReview (0.05s)
+=== RUN   TestArchiveFailClosed
+=== RUN   TestArchiveFailClosed/hidden_trailer
+=== RUN   TestArchiveFailClosed/depth
+=== RUN   TestArchiveFailClosed/oversize_expansion
+=== RUN   TestArchiveFailClosed/traversal
+=== RUN   TestArchiveFailClosed/backslash
+=== RUN   TestArchiveFailClosed/binary_member
+=== RUN   TestArchiveFailClosed/extra_metadata
+=== RUN   TestArchiveFailClosed/corrupt
+--- PASS: TestArchiveFailClosed (0.12s)
+    --- PASS: TestArchiveFailClosed/hidden_trailer (0.00s)
+    --- PASS: TestArchiveFailClosed/depth (0.00s)
+    --- PASS: TestArchiveFailClosed/oversize_expansion (0.01s)
+    --- PASS: TestArchiveFailClosed/traversal (0.01s)
+    --- PASS: TestArchiveFailClosed/backslash (0.00s)
+    --- PASS: TestArchiveFailClosed/binary_member (0.01s)
+    --- PASS: TestArchiveFailClosed/extra_metadata (0.01s)
+    --- PASS: TestArchiveFailClosed/corrupt (0.01s)
+=== RUN   TestNamesAndContentBindManifest
+--- PASS: TestNamesAndContentBindManifest (0.02s)
+=== RUN   TestPortablePaths
+--- PASS: TestPortablePaths (0.00s)
+=== RUN   TestOnlyInspectedSnapshotIsUploaded
+--- PASS: TestOnlyInspectedSnapshotIsUploaded (0.00s)
+=== RUN   TestEveryPassRescansAndDenialPreventsUpload
+--- PASS: TestEveryPassRescansAndDenialPreventsUpload (0.02s)
+=== RUN   TestSnapshotMutationPreventsUpload
+--- PASS: TestSnapshotMutationPreventsUpload (0.00s)
+=== RUN   TestTransferFailuresAndLimitsAreClosedAndRedacted
+=== RUN   TestTransferFailuresAndLimitsAreClosedAndRedacted/lsjson
+=== RUN   TestTransferFailuresAndLimitsAreClosedAndRedacted/cat
+=== RUN   TestTransferFailuresAndLimitsAreClosedAndRedacted/sync
+=== RUN   TestTransferFailuresAndLimitsAreClosedAndRedacted/check
+=== RUN   TestTransferFailuresAndLimitsAreClosedAndRedacted/negative
+=== RUN   TestTransferFailuresAndLimitsAreClosedAndRedacted/size
+=== RUN   TestTransferFailuresAndLimitsAreClosedAndRedacted/count
+=== RUN   TestTransferFailuresAndLimitsAreClosedAndRedacted/traversal
+=== RUN   TestTransferFailuresAndLimitsAreClosedAndRedacted/duplicate
+--- PASS: TestTransferFailuresAndLimitsAreClosedAndRedacted (0.03s)
+    --- PASS: TestTransferFailuresAndLimitsAreClosedAndRedacted/lsjson (0.00s)
+    --- PASS: TestTransferFailuresAndLimitsAreClosedAndRedacted/cat (0.00s)
+    --- PASS: TestTransferFailuresAndLimitsAreClosedAndRedacted/sync (0.00s)
+    --- PASS: TestTransferFailuresAndLimitsAreClosedAndRedacted/check (0.01s)
+    --- PASS: TestTransferFailuresAndLimitsAreClosedAndRedacted/negative (0.00s)
+    --- PASS: TestTransferFailuresAndLimitsAreClosedAndRedacted/size (0.00s)
+    --- PASS: TestTransferFailuresAndLimitsAreClosedAndRedacted/count (0.01s)
+    --- PASS: TestTransferFailuresAndLimitsAreClosedAndRedacted/traversal (0.00s)
+    --- PASS: TestTransferFailuresAndLimitsAreClosedAndRedacted/duplicate (0.00s)
+=== RUN   TestGlobalRcloneFlagsCannotChangeInspectedSet
+--- PASS: TestGlobalRcloneFlagsCannotChangeInspectedSet (0.00s)
+=== RUN   TestLocalRcloneIntegration
+--- PASS: TestLocalRcloneIntegration (2.28s)
+PASS
+coverage: 81.3% of statements
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/fileguard	2.595s	coverage: 81.3% of statements
+
+Exit code: 0

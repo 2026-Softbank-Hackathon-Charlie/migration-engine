@@ -1,0 +1,46 @@
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/fileguard	0.594s
+?   	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight	[no test files]
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/bucketprobe	5.926s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/capacity	0.218s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/gate	0.575s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/inventory	0.103s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/parity	0.079s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/paritygate	0.439s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/pgversion	0.198s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/probes	0.946s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/preflight/residency	0.877s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/runs	0.327s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/plans	0.933s
+2026/11/06 16:27:58 ERROR engine init failed err="could not initialize the migration engine: context \"nope\" does not exist in /home/secret/.kube/config"
+2026/11/06 16:27:59 WARN github err="connection refused" path=/v1/apps
+2026/11/06 16:27:59 WARN github err=timeout path=/v1/apps/validate
+2026/11/06 16:27:59 WARN github err=boom path=/v1/github/repos
+2026/11/06 16:28:00 WARN github err="github: the App's installation cannot grant a token for the repository: acme/imported" path=/v1/github/push-tokens
+2026/11/06 16:28:00 ERROR GitHub answered a push token request with a wider token; it was revoked repo=acme/imported err="github: the token GitHub created has a wider scope than asked for: all"
+2026/11/06 16:28:00 WARN github err=boom path=/v1/github/push-tokens
+2026/11/06 16:28:00 WARN github err=boom path=/v1/github/push-tokens
+2026/11/06 16:28:01 ERROR audit log write failed err="audit log is down" action="POST /v1/github/push-tokens" actor=ai
+2026/11/06 16:28:01 ERROR audit log write failed err="audit log is down" action="POST /v1/github/push-tokens" actor=ai
+2026/11/06 16:28:01 ERROR audit log write failed err="audit log is down" action="POST /v1/github/push-tokens" actor=ai
+2026/11/06 16:28:01 ERROR could not revoke a push token that was not handed out; it expires within the hour repo=acme/imported err="revoke failed"
+2026/11/06 16:28:01 ERROR audit log write failed err="audit log is down" action="POST /v1/github/push-tokens" actor=ai
+2026/11/06 16:28:02 WARN github err="connection reset" path=/v1/apps/shop/deployments
+--- FAIL: TestListAndGetDeployments (0.06s)
+    deploy_test.go:182: list: 200 {"deployments":[{"app":"shop","branch":"main","commit":"9fceb02d0ae598e95dc970b74767f19372d61af8","createdAt":"2026-11-06T07:28:02.546494Z","environments":[{"env":"gke","status":"pending"},{"env":"eks","status":"pending"}],"id":"dep_ca5f9e6f44b0","images":[],"instance":"shop","ref":"main","status":"queued","trigger":"register","triggeredBy":"op"},{"app":"shop","branch":"main","commit":"9fceb02d0ae598e95dc970b74767f19372d61af8","createdAt":"2026-11-06T07:28:02.546494Z","environments":[{"env":"gke","status":"pending"},{"env":"eks","status":"pending"}],"id":"dep_9c58d3c04c97","images":[],"instance":"shop","ref":"main","status":"queued","trigger":"manual","triggeredBy":"op"}]}
+2026/11/06 16:28:02 WARN github err="gitops repository" path=/v1/apps/shop
+2026/11/06 16:28:02 WARN gateway err="traffic gateway"
+2026/11/06 16:28:02 ERROR internal error err="connection reset" path=/v1/apps/shop/instances
+2026/11/06 16:28:03 ERROR webhook: read the branches of an app app=shop-manual delivery=d-1 err="connection reset"
+2026/11/06 16:28:03 ERROR webhook: read the branches of an app app=shop delivery=d-2 err="connection reset"
+2026/11/06 16:28:03 ERROR webhook: read the branches of an app app=shop-manual delivery=d-2 err="connection reset"
+2026/11/06 16:28:03 ERROR internal error err="connection reset" path=/v1/webhooks/github
+2026/11/06 16:28:03 WARN github err="connection refused" path=/v1/apps/shop/instances
+2026/11/06 16:28:03 WARN github err="gitops repository" path=/v1/apps/shop/instances/shop--dev
+2026/11/06 16:28:03 WARN gateway err="traffic gateway"
+2026/11/06 16:28:05 ERROR audit log write failed err="audit log is down" action="GET /v1/apps/{name}/secrets/{secret}" actor=op
+FAIL
+FAIL	github.com/2026-Softbank-Hackathon-Charlie/platform/internal/api	10.302s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/platform/cmd/api	0.577s
+FAIL
+
+Exit code: 1

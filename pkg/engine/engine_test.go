@@ -349,6 +349,150 @@ func TestFileSyncFailsInsideFence(t *testing.T) {
 	}
 }
 
+// The production run of 2026-11-05 halted although the target had promoted:
+// the engine's link to it dropped every few seconds, and every failed read
+// reset the settle count. A failed read is not a restart; the server start
+// time of the next read says whether one happened (ADR 0013).
+func TestSettleToleratesDroppedConnections(t *testing.T) {
+	h := newHarness(t)
+	h.w.flakyConnects = true // every other connection fails from promotion to cutover
+	e := h.engine(t, "")
+	if err := e.Run(context.Background()); err != nil {
+		t.Fatalf("run: %v (outcome %s)", err, e.State().Outcome)
+	}
+	rep, ok := e.State().Steps[StepSwitchover].Evidence["settle"].(SettleReport)
+	if !ok || rep.Unobserved == 0 || rep.Restarts != 0 {
+		t.Fatalf("settle evidence %+v", e.State().Steps[StepSwitchover].Evidence["settle"])
+	}
+	timing, _ := e.State().Steps[StepSwitchover].Evidence["timingMillis"].(map[string]int64)
+	for _, k := range []string{"replayFence", "fenceGate", "demote", "promoteToWritable", "settle"} {
+		if _, ok := timing[k]; !ok {
+			t.Errorf("timing lacks %s: %v", k, timing)
+		}
+	}
+}
+
+// A restart that shows nothing but a new server start time still restarts
+// the settle count.
+func TestSettleSeesASilentRestart(t *testing.T) {
+	h := newHarness(t)
+	h.w.dstDB.silentRestartAt = 2
+	e := h.engine(t, "")
+	if err := e.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if rep := e.State().Steps[StepSwitchover].Evidence["settle"].(SettleReport); rep.Restarts != 1 {
+		t.Fatalf("restarts %d, want 1 (%+v)", rep.Restarts, rep)
+	}
+}
+
+// A run that halted because the promoted target did not settle in time (the
+// production case: it settled right after) is resumed: the engine checks both
+// sides, counts the switchover as done and cuts over to the target.
+func TestResumeHaltedAfterTargetSettles(t *testing.T) {
+	h := newHarness(t)
+	h.w.restartGets = 1 << 30 // never settles during the run
+	e := h.engine(t, "")
+	if err := e.Run(context.Background()); err == nil || e.State().Outcome != OutcomeHalted {
+		t.Fatalf("want halted, got %v %s", err, e.State().Outcome)
+	}
+	if err := e.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "is halted") {
+		t.Fatalf("a halted run must not resume by itself: %v", err)
+	}
+	// The target settles later.
+	h.w.mu.Lock()
+	h.w.restartGets = 1
+	h.w.mu.Unlock()
+
+	// A fresh engine on the same state file, as the CLI does with -run.
+	e2 := h.engine(t, e.RunID())
+	if err := e2.ResumeHalted(context.Background()); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if err := e2.Run(context.Background()); err != nil {
+		t.Fatalf("run after resume: %v", err)
+	}
+	st := e2.State()
+	if st.Outcome != OutcomeSucceeded || !st.TrafficOnTarget || st.WritesHeld {
+		t.Fatalf("state %+v", st)
+	}
+	if _, ok := st.Steps[StepSwitchover].Evidence["resumedAfterHalt"]; !ok {
+		t.Fatalf("switchover evidence lacks the resume: %v", st.Steps[StepSwitchover].Evidence)
+	}
+	calls := h.w.Calls()
+	if n := strings.Count(strings.Join(calls, "\n"), `dst.setPrimary db-eks token="tok-1000"`); n != 1 {
+		t.Fatalf("target promoted %d times: %v", n, calls)
+	}
+	assertOrder(t, calls, "dst.restart done", "gw.route eks", "gw.release")
+}
+
+// Resume refuses when it cannot prove there is one primary.
+func TestResumeHaltedRefusesWithoutProof(t *testing.T) {
+	for name, tc := range map[string]struct {
+		fault func(w *world)
+		want  string
+	}{
+		"halted before promotion": {func(w *world) { w.noDemotionToken = true }, "before the target's promotion"},
+		"target not primary": {func(w *world) {
+			w.restartGets = 1 << 30
+			w.afterHalt = func(w *world) { w.dst.st.ReplicaPrimary = "db-gke" }
+		}, "target is not the topology primary"},
+		"source still writable": {func(w *world) {
+			w.restartGets = 1 << 30
+			w.afterHalt = func(w *world) { w.restartGets = 1; w.srcDB.recovery = false }
+		}, "cannot confirm the source runs as a replica"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			tc.fault(h.w)
+			e := h.engine(t, "")
+			if err := e.Run(context.Background()); err == nil || e.State().Outcome != OutcomeHalted {
+				t.Fatalf("want halted, got %v %s", err, e.State().Outcome)
+			}
+			if f := h.w.afterHalt; f != nil {
+				h.w.mu.Lock()
+				f(h.w)
+				h.w.mu.Unlock()
+			}
+			err := e.ResumeHalted(context.Background())
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("resume: %v, want %q", err, tc.want)
+			}
+			if e.State().Outcome != OutcomeHalted || contains(h.w.Calls(), "gw.release") {
+				t.Fatalf("a refused resume changed the run: %s %v", e.State().Outcome, h.w.Calls())
+			}
+		})
+	}
+}
+
+// A fence gate that would hold writes longer than maxFenceGate (a big table)
+// is found in delta, while writes still flow; they are never held.
+func TestSlowFenceGateFailsBeforeTheHold(t *testing.T) {
+	h := newHarness(t)
+	h.p.Thresholds.MaxFenceGate.Duration = 20 * time.Millisecond
+	h.w.ver.delay = 60 * time.Millisecond
+	e := h.engine(t, "")
+	err := e.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "over thresholds.maxFenceGate") {
+		t.Fatalf("err = %v", err)
+	}
+	st := e.State()
+	if st.Outcome != OutcomeFailed || st.FailureStep != StepDelta || st.WritesHeld || contains(h.w.Calls(), "gw.hold") {
+		t.Fatalf("outcome %s step %s held %t calls %v", st.Outcome, st.FailureStep, st.WritesHeld, h.w.Calls())
+	}
+}
+
+// A new target that refuses its first connections (service not ready yet) is
+// retried in prepare, not a failed run.
+func TestPrepareRetriesTargetConnection(t *testing.T) {
+	h := newHarness(t)
+	h.w.dstConnectErrs = 3
+	e := h.engine(t, "")
+	if err := e.Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+}
+
 // runThrough runs the steps before stop, so a test can break something
 // between steps (a fault that would also break an earlier step).
 func runThrough(t *testing.T, e *Engine, stop string) {

@@ -116,6 +116,11 @@ type Thresholds struct {
 	CatchupTimeout    Duration `json:"catchupTimeout,omitempty"`    // default 10m
 	SwitchoverTimeout Duration `json:"switchoverTimeout,omitempty"` // default 2m
 	MaxDowntime       Duration `json:"maxDowntime,omitempty"`       // default 3m
+	// MaxFenceGate bounds the fence gate, which runs while writes are held and
+	// scans every compared table. delta times a rehearsal of it before the
+	// hold and fails (writes never held) when it takes longer. Default 20s,
+	// well inside the gateway's 55s per-write hold limit (ADR 0013).
+	MaxFenceGate Duration `json:"maxFenceGate,omitempty"`
 }
 
 // DecommissionSpec says what belongs to the app in the source environment and
@@ -223,6 +228,9 @@ func (p *Plan) applyDefaults() {
 	if t.MaxDowntime.Duration == 0 {
 		t.MaxDowntime.Duration = 3 * time.Minute
 	}
+	if t.MaxFenceGate.Duration == 0 {
+		t.MaxFenceGate.Duration = 20 * time.Second
+	}
 	if d := p.Decommission; d != nil && d.Observe.Duration == 0 {
 		d.Observe.Duration = 2 * time.Minute
 	}
@@ -276,6 +284,9 @@ func (p *Plan) Validate() error {
 	}
 	if p.Thresholds.MaxLagBytes < 0 {
 		errs = append(errs, errors.New("thresholds.maxLagBytes must be >= 0"))
+	}
+	if p.Thresholds.MaxFenceGate.Duration < 0 {
+		errs = append(errs, errors.New("thresholds.maxFenceGate must be >= 0"))
 	}
 	if d := p.Decommission; d != nil {
 		errs = append(errs, d.validate()...)

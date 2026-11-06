@@ -76,6 +76,15 @@ func (d *DB) PendingRestart(ctx context.Context) (bool, error) {
 	return b, err
 }
 
+// PostmasterStart is when the server process started. It changes on every
+// restart, so two reads that agree prove no restart happened between them,
+// even if connections failed in between.
+func (d *DB) PostmasterStart(ctx context.Context) (time.Time, error) {
+	var t time.Time
+	err := d.Pool.QueryRow(ctx, "SELECT pg_postmaster_start_time()").Scan(&t)
+	return t, err
+}
+
 // ClientSessions counts client sessions other than the engine's own: what is
 // still connected to this database from applications, batch jobs or people.
 func (d *DB) ClientSessions(ctx context.Context) (int, error) {

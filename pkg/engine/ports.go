@@ -31,6 +31,8 @@ type Cluster interface {
 type Database interface {
 	InRecovery(ctx context.Context) (bool, error)
 	PendingRestart(ctx context.Context) (bool, error)
+	// PostmasterStart changes on every server restart (waitSettled).
+	PostmasterStart(ctx context.Context) (time.Time, error)
 	WALPosition(ctx context.Context) (string, error)
 	LSNDiff(ctx context.Context, a, b string) (int64, error)
 	Close()

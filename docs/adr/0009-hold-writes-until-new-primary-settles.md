@@ -35,3 +35,7 @@
 ## 보완 (2026-11-04): 원복도 같은 재시작을 기다린다
 
 원복은 원본을 다시 승격하는데, 그 뒤에는 쓰기 가능해지는 것(`waitWritable`)만 기다리고 쓰기를 풀었다. 게이트웨이 리허설(`test/gateway-rehearsal`, CNPG 1.30.1, 부하 약 20 req/s)에서 원복 완료 기록 5초 뒤 CNPG가 다시 승격된 원본을 제자리 재시작했고(`the database system is shutting down` → `starting up`), 그 0.35초 사이의 쓰기 8건이 503으로 실패했다(`docs/test-records/README.md`). 원복도 다시 승격한 뒤 정방향과 같은 `waitSettled`(healthy, 쓰기 가능, `pending_restart` 없음이 두 번 연속, 최소 3초)를 지나야 경로를 원본으로 돌리고 쓰기를 푼다. 쓰기 다운타임은 그만큼 길어진다.
+
+## 보완 (2026-11-06): 권장값 1초
+
+`smartShutdownTimeout` 권장값을 5초에서 1초로 바꿨다. 재시작 동안 쓰기는 게이트웨이에 보류되어 있으므로 세션을 기다릴 이유가 없고, 리허설에서 쓰기 정지가 약 13초에서 8.4초로 줄었다. 안정 확인은 읽기 실패와 재시작을 서버 시작 시각으로 구분하도록 바뀌었다. [ADR 0013](0013-shorter-write-pause-and-recoverable-halt.md)

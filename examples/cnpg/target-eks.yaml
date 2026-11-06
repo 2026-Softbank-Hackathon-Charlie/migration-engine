@@ -11,7 +11,9 @@ spec:
   # CNPG restarts a newly promoted primary in place with a smart shutdown, which
   # waits for every client session (app connection pools) up to this many seconds.
   # The default 180 would keep the new primary down for minutes after a switchover.
-  smartShutdownTimeout: 5
+  # Writes are held at the gateway during that restart, so 1 second is enough and
+  # cut the write pause from about 13s to 8.4s in rehearsals (ADR 0013).
+  smartShutdownTimeout: 1
   storage:
     size: 10Gi
     storageClass: gp3   # EKS needs the EBS CSI driver

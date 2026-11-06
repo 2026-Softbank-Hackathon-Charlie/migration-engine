@@ -47,7 +47,14 @@ kubectl -n cnpg-system rollout status deploy/cnpg-controller-manager --timeout=3
 kubectl create namespace hop --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 k delete cluster --all --wait=true >/dev/null
 k delete pvc --all --wait=true >/dev/null
-k apply -f "$shared/nodeports.yaml" -f "$shared/source.yaml" >/dev/null
+# SMART_SHUTDOWN overrides spec.smartShutdownTimeout of both clusters (seconds;
+# the shared manifests use 1). CNPG restarts a new primary once after promotion
+# with a smart shutdown that waits up to this long for client sessions (ADR 0013).
+for m in source target; do
+  sed -E "s/smartShutdownTimeout: [0-9]+/smartShutdownTimeout: ${SMART_SHUTDOWN:-1}/" "$shared/$m.yaml" >"$work/$m.yaml"
+done
+echo "   smartShutdownTimeout ${SMART_SHUTDOWN:-1}s"
+k apply -f "$shared/nodeports.yaml" -f "$work/source.yaml" >/dev/null
 k wait cluster/pg-src --for=jsonpath='{.status.phase}'="Cluster in healthy state" --timeout=600s
 k wait pod/pg-src-1 --for=condition=Ready --timeout=300s
 echo "   source: $(k exec pg-src-1 -c postgres -- psql -tA -c 'show server_version')"
@@ -72,7 +79,7 @@ plan() { # plan <file> <id> <src> <dst> <srcPort> <dstPort> <switchoverTimeout>
              "dsn": "postgres://app:\${SRC_PGPASSWORD}@127.0.0.1:$5/app?sslmode=require"},
   "target": {"env": "$4", "context": "kind-hopgw", "namespace": "hop", "cluster": "pg-$4",
              "dsn": "postgres://app:\${SRC_PGPASSWORD}@127.0.0.1:$6/app?sslmode=require",
-             "manifest": "$shared/target.yaml"},
+             "manifest": "$work/target.yaml"},
   "gateway": {"mode": "http", "url": "http://127.0.0.1:55581", "sourceBackend": "$3", "targetBackend": "$4"},
   "verify": {"schemas": ["public"], "fenceGate": true, "writtenRecords": "$work/written.jsonl"},
   "thresholds": {"maxLagBytes": 1048576, "catchupTimeout": "10m", "switchoverTimeout": "$7", "maxDowntime": "3m"}

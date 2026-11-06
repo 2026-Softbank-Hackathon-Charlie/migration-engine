@@ -19,6 +19,8 @@
 | 2026-11-05 | 실제 AWS ↔ GCP 이전 리허설 (EKS ↔ GKE, Tailscale operator 경로, 부하 중) | gateway 없이: EKS→GKE 성공, GKE→EKS rolled_back. **gateway(http)로 왕복 2/2 성공, 실패 요청 0, 쓰기 대기 17.4초, 응답한 쓰기 누락 0** | [아래](#2026-11-05-실제-aws--gcp-이전-리허설) |
 | 2026-11-05 | **운영 moimroom 실제 이전 AWS → GCP** (공개 URL 부하 중, 운영 게이트웨이) | 엔진 **halted** at switchover (대상 승격은 성공, port-forward로 안정 확인 실패) → 운영자가 수동 cutover. 응답한 예약 1,487건·사진 70장 누락 0, 쓰기 실패 9건(보류 55초 초과 503), **쓰기 공백 3분 36초** | [아래](#2026-11-05-운영-moimroom-실제-이전-aws--gcp) |
 | 2026-11-06 | cold 모드(ADR 0012) 실제 EKS e2e: 기동 때 DDL을 실행하는 앱, 부하 중 | 문제 재현(replica에서 기동 실패) 확인. **정상 전환 성공, 쓰기 대기 12.4초, 실패 0, 누락 0**. **실패 주입 → 승격 되돌림 `rolled_back` 성공**, 누락 0, 쓰기 대기 59.8초(503 1건) | [아래](#2026-11-06-cold-모드-실제-eks-e2e) |
+| 2026-11-06 | 쓰기 정지 구간 계측과 smartShutdownTimeout 5초 대 1초 (kind, 부하 중) | 1초에서 정지 13초 → 8.4초, 4회 모두 실패·누락 0 | [아래](#2026-11-06-쓰기-정지-시간-구간별-실측과-단축) |
+| 2026-11-06 | 엔진 halt 재개·안정 확인·준비 재시도 단위 테스트, platform lost-response e2e | 통과 (platform 나머지 e2e는 고정된 엔진 버전의 접속 재시도 부재로 1회 실패) | [아래](#2026-11-06-halt-재개-연결-끊김-재시도-멱등) |
 
 ---
 
@@ -526,3 +528,59 @@ goose를 쓰는 앱 자체는 warm 모드로 옮길 수 있다. 시작할 때 �
 ### 정리
 
 - 네임스페이스 `cold-test`(DB 2개와 PVC, 앱, 러너, RBAC) 삭제, ECR `hopcharlie/platform`의 `cold-test-goose-1`, `cold-test-goose-2` 태그 삭제
+
+## 2026-11-06 쓰기 정지 시간 구간별 실측과 단축
+
+- 대상: migration-engine 브랜치 `feat/shorter-safer-write-pause`(미커밋, main `292ebaf` 기반), platform 게이트웨이 `fb3eb20`
+- 환경: 로컬 kind `hopgw`, CNPG 1.30.1, PG 18.6, 인스턴스 1, `test/gateway-rehearsal/run.sh`(hello 앱 두 벌, 부하 약 20 req/s), 다른 부하 없음
+- 원시 자료(비밀번호 가림): [2026-11-06-write-pause/](2026-11-06-write-pause/)
+
+정지 구간 계측(엔진 증거 `timingMillis`, `settle`), smartShutdownTimeout 5초:
+
+| 구간 | 시간 |
+|---|---|
+| fence LSN 따라잡기 + fence gate | 0.03초 |
+| 원본 강등 | 1.0초 |
+| 승격 → 쓰기 가능 | 1.0초 |
+| 안정 대기 | 11.0초 (pending_restart 1, 재시작 1, 접속 실패 11, CNPG 비정상 9) |
+
+- 원인(PostgreSQL·CNPG 로그로 확인): 승격 때 `archive_mode`가 바뀌어(`cannot be changed without restarting the server`) CNPG가 0.2초 뒤 제자리 재시작을 결정하고 smart shutdown을 요청한다. smart shutdown이 smartShutdownTimeout(5초)을 다 기다린 뒤 fast로 넘어간다
+
+smartShutdownTimeout 5초 대 1초(번갈아 2회씩):
+
+| 회 | 설정 | 정상 이전 쓰기 정지 | 안정 대기 | 원복 시나리오 보류 | 실패 요청 | 누락 |
+|---|---|---|---|---|---|---|
+| 1 | 5초 | 13.4초 | 11.3초 | 37.8초 | 0 / 1,211 | 0 |
+| 2 | 1초 | **8.4초** | 6.2초 | 32.6초 | 0 / 1,247 | 0 |
+| 3 | 5초 | 12.9초 | 10.8초 | 37.8초 | 0 / 1,174 | 0 |
+| 4 | 1초 | **8.4초** | 6.3초 | 33.2초 | 0 / 1,213 | 0 |
+
+- 결론: 1초로 쓰기 정지 약 4.8초(35%) 단축. examples, 리허설 manifest, `docs/details.md` 권장값을 1초로 바꿈(ADR 0013)
+- 버린 측정: 다른 kind 클러스터(platform e2e)가 동시에 돈 1초 실행은 19.3초(강등·승격이 5~6초로 늘어남). CPU 경합이라 결론에 쓰지 않음
+- 검증하지 않은 것: 실제 EKS/GKE에서의 단축 폭, 인스턴스 2개 이상 클러스터, 1초가 앱 커넥션 풀에 주는 영향(재시작 때 세션이 fast shutdown으로 끊김. 이번 부하에서는 실패 0)
+
+## 2026-11-06 halt 재개, 연결 끊김, 재시도, 멱등
+
+엔진 단위 테스트(가짜 객체, 브랜치 `feat/shorter-safer-write-pause`):
+
+| 테스트 | 내용 | 결과 |
+|---|---|---|
+| `TestSettleToleratesDroppedConnections` | 승격부터 cutover까지 접속이 하나 걸러 실패(11/05 운영 port-forward 증상) | 통과. 바꾸기 전 안정 확인으로 돌리면 `halted at switchover: target did not settle` 로 실패하는 것을 확인 |
+| `TestSettleSeesASilentRestart` | 다른 신호 없이 서버 시작 시각만 바뀜 | 재시작 1회로 셈 |
+| `TestResumeHaltedAfterTargetSettles` | 안정 대기 시간 초과로 halted → 대상 안정 후 `ResumeHalted` | cutover·verify·finalize까지 succeeded, 승격 요청은 한 번뿐 |
+| `TestResumeHaltedRefusesWithoutProof` | 승격 전 halt / 대상이 primary 아님 / 원본이 쓰기 가능 | 세 경우 모두 재개 거부, run 그대로 |
+| `TestSlowFenceGateFailsBeforeTheHold` | fence gate 리허설이 maxFenceGate를 넘음 | delta에서 failed, 쓰기 보류 없음 |
+| `TestPrepareRetriesTargetConnection` | 새 대상의 첫 접속 3번 실패 | 재시도 후 succeeded |
+
+- `go test ./...`, `go vet ./...` 통과
+
+platform e2e(worktree `.wt-platform-retry`, 브랜치 `feat/retry-safe-writes`, 미커밋, kind `hop-e2e`, CNPG 1.25.1):
+
+| 회 | 시나리오 | 결과 |
+|---|---|---|
+| 1 | lost-response | **통과**. 원본 앱이 5번째 쓰기마다 커밋 뒤 응답 없이 끊음 → 첫 시도 실패 151건 모두 같은 id 재시도로 완료, 실패 0, 행 895 = 응답한 쓰기 895(중복 0, 모르는 행 0) |
+| 1 | canary-fault | 실패: platform main의 새 규칙(AI가 낸 Plan은 리허설 보고서 필요, platform #24)으로 승인 409. 드라이버가 Plan을 operator로 내도록 고침 |
+| 2 | lost-response | **통과**. 첫 시도 실패 154건 모두 재시도로 완료, 실패 0, 행 908 = 응답 908 |
+| 2 | canary-fault | 실패: prepare에서 대상 DB 첫 접속 `tls error: EOF` 한 번으로 run failed. platform이 고정한 엔진에는 접속 재시도가 없음 → 엔진에 재시도 추가(`TestPrepareRetriesTargetConnection`) |
+
+- 검증하지 않은 것: 엔진 수정이 들어간 platform으로 나머지 e2e(canary-fault, observe-rollback, migrate) 재실행은 platform이 엔진을 올린 뒤. 실제 클라우드에서 `-resume-halted` 사용

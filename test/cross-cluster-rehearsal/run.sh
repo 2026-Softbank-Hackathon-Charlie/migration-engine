@@ -41,7 +41,7 @@ cleanup() {
       kubectl --kubeconfig "$kcfg" -n hop get clusters -o 'custom-columns=NAME:.metadata.name,PHASE:.status.phase,READY:.status.readyInstances,SYSTEM:.status.systemID' || true
       kubectl --kubeconfig "$kcfg" -n hop get pods || true
       kubectl --kubeconfig "$kcfg" -n cnpg-system logs deploy/cnpg-controller-manager --tail=40 || true
-      kubectl --kubeconfig "$kcfg" -n hop logs -l cnpg.io/podRole=instance -c postgres --tail=40 --max-log-requests=2 || true
+      kubectl --kubeconfig "$kcfg" -n hop logs -l cnpg.io/cluster --all-containers --tail=60 --max-log-requests=4 || true
     done
   fi
   [ -n "${KEEP:-}" ] || { kind delete cluster --name hopcloud >/dev/null 2>&1 || true; kind delete cluster --name hoponprem >/dev/null 2>&1 || true; }

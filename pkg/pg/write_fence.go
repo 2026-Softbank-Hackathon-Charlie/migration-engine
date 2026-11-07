@@ -60,12 +60,13 @@ WHERE login.rolcanlogin AND NOT login.rolsuper AND EXISTS (
  EXISTS(SELECT 1 FROM pg_namespace n WHERE left(n.nspname,3)<>'pg_' AND n.nspname<>'information_schema'
  AND has_schema_privilege(r.oid,n.oid,'CREATE')) OR
  EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
- WHERE left(n.nspname,3)<>'pg_' AND n.nspname<>'information_schema' AND c.relkind IN ('r','p','v','m','f')
- AND (has_table_privilege(r.oid,c.oid,'INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER')
- OR has_any_column_privilege(r.oid,c.oid,'INSERT,UPDATE') OR pg_has_role(r.oid,c.relowner,'USAGE'))) OR
+ WHERE left(n.nspname,3)<>'pg_' AND n.nspname<>'information_schema'
+ AND CASE WHEN c.relkind IN ('r','p','v','m','f') THEN
+ (has_table_privilege(r.oid,c.oid,'INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER')
+ OR has_any_column_privilege(r.oid,c.oid,'INSERT,UPDATE') OR pg_has_role(r.oid,c.relowner,'USAGE')) ELSE false END) OR
  EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
- WHERE left(n.nspname,3)<>'pg_' AND n.nspname<>'information_schema' AND c.relkind='S'
- AND has_sequence_privilege(r.oid,c.oid,'USAGE,UPDATE')) OR
+ WHERE left(n.nspname,3)<>'pg_' AND n.nspname<>'information_schema'
+ AND CASE WHEN c.relkind='S' THEN has_sequence_privilege(r.oid,c.oid,'USAGE,UPDATE') ELSE false END) OR
  EXISTS(SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
  WHERE left(n.nspname,3)<>'pg_' AND n.nspname<>'information_schema' AND p.prosecdef
  AND has_function_privilege(r.oid,p.oid,'EXECUTE'))))

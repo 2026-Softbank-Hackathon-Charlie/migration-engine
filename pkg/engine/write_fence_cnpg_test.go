@@ -66,9 +66,15 @@ func TestSourceWriteFenceCNPGShutdownCheckpoint(t *testing.T) {
 			held = true
 			once.Do(func() {
 				go func() {
-					// The app's post_auth_delay=3 makes a new authenticating backend
+					// This client's post_auth_delay=3 makes an authenticating backend
 					// invisible to the earlier pg_stat_activity session snapshot.
-					c, e := pgx.Connect(ctx, writerDSN)
+					config, e := pgx.ParseConfig(writerDSN)
+					if e != nil {
+						lateResult <- e
+						return
+					}
+					config.RuntimeParams["options"] = "-c post_auth_delay=3"
+					c, e := pgx.ConnectConfig(ctx, config)
 					if e == nil {
 						_, e = c.Exec(ctx, `INSERT INTO orders(total,note) VALUES (2,'fence-late-authentication')`)
 						_ = c.Close(context.Background())

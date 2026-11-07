@@ -147,8 +147,11 @@ func (f *sourceHBAFence) ConfirmReadOnlySource(ctx context.Context, db Database,
 	if err != nil {
 		return "", err
 	}
-	if s.UID != snapshot.UID || s.SystemIdentifier != snapshot.SystemIdentifier || s.IsPrimary() || s.Instances != 1 || token == "" || s.DemotionToken != token {
-		return "", errors.New("source identity or topology is not the observed demoted cluster")
+	// CNPG can clear status.systemID during demotion. Do not invent an API
+	// value: require the actual SQL identifier on the pinned original endpoint
+	// below, and reject an API identifier whenever it explicitly disagrees.
+	if s.UID != snapshot.UID || s.SystemIdentifier != "" && s.SystemIdentifier != snapshot.SystemIdentifier || s.IsPrimary() || s.Instances != 1 || token == "" || s.DemotionToken != token {
+		return "", fmt.Errorf("demoted source boundary failed: uidMatch=%t systemIdPresent=%t systemIdMatch=%t primary=%t instances=%d tokenPresent=%t tokenMatch=%t", s.UID == snapshot.UID, s.SystemIdentifier != "", s.SystemIdentifier == snapshot.SystemIdentifier, s.IsPrimary(), s.Instances, s.DemotionToken != "", token != "" && s.DemotionToken == token)
 	}
 	f.pg.DB = p
 	if err = p.PinTLSPeer(ctx, snapshot.SQLPeerSHA256); err != nil {

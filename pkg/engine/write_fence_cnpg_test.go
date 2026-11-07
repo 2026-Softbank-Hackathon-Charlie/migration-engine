@@ -275,6 +275,23 @@ func TestSourceWriteFenceCNPGShutdownCheckpoint(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("old startup backend was not conclusively terminated after demotion")
 			}
+			// HBA admission has been restored. A fresh ordinary app OWNER still
+			// cannot write on the real source, even with its default read-only
+			// setting disabled; recovery, not that session GUC, is the boundary.
+			sourceWriter, writeErr := pgx.Connect(ctx, writerDSN)
+			if writeErr != nil {
+				t.Fatalf("source read admission was not restored: %v", writeErr)
+			}
+			if _, writeErr = sourceWriter.Exec(ctx, `SET default_transaction_read_only=off`); writeErr != nil {
+				_ = sourceWriter.Close(ctx)
+				t.Fatal(writeErr)
+			}
+			_, writeErr = sourceWriter.Exec(ctx, `INSERT INTO orders(total,note) VALUES (3,'fence-fresh-source-after-demotion')`)
+			_ = sourceWriter.Close(ctx)
+			var readonlyError *pgconn.PgError
+			if !errors.As(writeErr, &readonlyError) || readonlyError.Code != "25006" {
+				t.Fatalf("fresh app OWNER write was not rejected by source recovery: %v", writeErr)
+			}
 		}
 	}
 	proof := e.State().SourceWriteFence
@@ -289,12 +306,12 @@ func TestSourceWriteFenceCNPGShutdownCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer target.Close(context.Background())
-	var committed, afterDemotion int
-	if err = target.QueryRow(ctx, `SELECT count(*) FILTER (WHERE note='fence-late-authentication'),count(*) FILTER (WHERE note='fence-after-demotion') FROM orders`).Scan(&committed, &afterDemotion); err != nil {
+	var committed, afterDemotion, freshSource int
+	if err = target.QueryRow(ctx, `SELECT count(*) FILTER (WHERE note='fence-late-authentication'),count(*) FILTER (WHERE note='fence-after-demotion'),count(*) FILTER (WHERE note='fence-fresh-source-after-demotion') FROM orders`).Scan(&committed, &afterDemotion, &freshSource); err != nil {
 		t.Fatal(err)
 	}
-	if committed != 1 || afterDemotion != 0 {
-		t.Fatalf("startup race accounting failed: committed=%d afterDemotion=%d", committed, afterDemotion)
+	if committed != 1 || afterDemotion != 0 || freshSource != 0 {
+		t.Fatalf("startup race accounting failed: committed=%d afterDemotion=%d freshSource=%d", committed, afterDemotion, freshSource)
 	}
 	t.Logf("real CNPG checkpoint=%s lateCommitLSN=%s targetLateRows=%d oldStartupBackendTerminated=true", proof.FinalFenceLSN, lateCommitLSN, committed)
 	t.Logf("real CNPG timingMillis=%v writeHoldMillis=%d", e.State().Steps[StepSwitchover].Evidence["timingMillis"], e.State().DowntimeMillis)

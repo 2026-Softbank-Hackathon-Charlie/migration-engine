@@ -180,10 +180,7 @@ func (f *WriterFence) Admitted(ctx context.Context) error {
 }
 
 func (f *WriterFence) probeAdmission(ctx context.Context, reject bool) error {
-	base, err := pgx.ParseConfig(f.DSN)
-	if err != nil {
-		return errors.New("invalid write fence observer connection configuration")
-	}
+	base := f.DB.Pool.Config().ConnConfig.Copy()
 	if base.Host == "" || strings.HasPrefix(base.Host, "/") {
 		return errors.New("write fence requires a TCP source endpoint")
 	}

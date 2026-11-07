@@ -33,12 +33,13 @@ type sourceFenceCluster interface {
 }
 
 type sourceHBAFence struct {
-	cluster  sourceFenceCluster
-	target   Cluster
-	targetDB *pg.DB
-	pg       *pg.WriterFence
-	roles    []string
-	interval time.Duration
+	cluster    sourceFenceCluster
+	target     Cluster
+	targetDB   *pg.DB
+	targetPeer string
+	pg         *pg.WriterFence
+	roles      []string
+	interval   time.Duration
 }
 
 func (f *sourceHBAFence) Precheck(ctx context.Context, lease string) (cnpg.HBASnapshot, error) {
@@ -51,6 +52,23 @@ func (f *sourceHBAFence) Precheck(ctx context.Context, lease string) (cnpg.HBASn
 	}
 	snapshot, err := f.cluster.InspectWriteFence(ctx)
 	if err != nil {
+		return snapshot, err
+	}
+	snapshot.SQLPeerSHA256, err = f.pg.DB.TLSPeerSHA256(ctx)
+	if err != nil {
+		return snapshot, err
+	}
+	f.targetPeer, err = f.targetDB.TLSPeerSHA256(ctx)
+	if err != nil {
+		return snapshot, err
+	}
+	if snapshot.SQLPeerSHA256 == f.targetPeer {
+		return snapshot, errors.New("source and target SQL endpoints have indistinguishable TLS identities")
+	}
+	if err = f.pg.DB.PinTLSPeer(ctx, snapshot.SQLPeerSHA256); err != nil {
+		return snapshot, err
+	}
+	if err = f.targetDB.PinTLSPeer(ctx, f.targetPeer); err != nil {
 		return snapshot, err
 	}
 	if err = f.pg.Precheck(ctx); err != nil {
@@ -126,6 +144,9 @@ func (f *sourceHBAFence) ConfirmReadOnlySource(ctx context.Context, db Database,
 		return "", errors.New("source identity or topology is not the observed demoted cluster")
 	}
 	f.pg.DB = p
+	if err = p.PinTLSPeer(ctx, snapshot.SQLPeerSHA256); err != nil {
+		return "", err
+	}
 	if err = f.pg.VerifySystemIdentifier(ctx, snapshot.SystemIdentifier); err != nil {
 		return "", err
 	}
@@ -220,6 +241,34 @@ func (e *Engine) prepareSourceWriteFence(ctx context.Context) error {
 	snapshot, err := e.writeFencer.Precheck(ctx, lease)
 	if err != nil {
 		return err
+	}
+	if f, ok := e.writeFencer.(*sourceHBAFence); ok {
+		connect := e.connect
+		sourceDSN, targetDSN := e.plan.Source.DSN, e.plan.Target.DSN
+		e.connect = func(ctx context.Context, dsn string) (Database, error) {
+			db, err := connect(ctx, dsn)
+			if err != nil {
+				return nil, err
+			}
+			expected := ""
+			if dsn == sourceDSN {
+				expected = snapshot.SQLPeerSHA256
+			} else if dsn == targetDSN {
+				expected = f.targetPeer
+			}
+			if expected != "" {
+				p, ok := db.(*pg.DB)
+				if !ok {
+					db.Close()
+					return nil, errors.New("SQL endpoint identity cannot be checked")
+				}
+				if err = p.PinTLSPeer(ctx, expected); err != nil {
+					db.Close()
+					return nil, err
+				}
+			}
+			return db, nil
+		}
 	}
 	proof := &SourceWriteFenceState{Lease: lease, Source: snapshot, WriterRoles: slices.Clone(e.plan.SourceWriteFence.WriterRoles)}
 	return e.persistWriteFence(proof)

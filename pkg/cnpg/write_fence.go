@@ -24,6 +24,7 @@ type HBASnapshot struct {
 	Hash             string `json:"originalHbaHash"`
 	Absent           bool   `json:"originalHbaAbsent"`
 	SystemIdentifier string `json:"systemIdentifier"`
+	SQLPeerSHA256    string `json:"sqlPeerSha256,omitempty"`
 }
 
 var writerRole = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)

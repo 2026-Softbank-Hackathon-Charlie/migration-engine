@@ -552,6 +552,17 @@ func (e *Engine) onFailure(step string, cause error) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
+	// Once CNPG has started source demotion, restoring read admission does not
+	// restore permission to re-promote it. In particular, a failed persistence
+	// after HBA/include cleanup may already have changed Released in memory.
+	if e.plan.SourceWriteFence != nil && e.state.SourceDemoted && !e.state.PromoteRequested {
+		e.mu.Lock()
+		e.state.Outcome = OutcomeHalted
+		e.mu.Unlock()
+		e.save()
+		e.emit(step, EventHalt, "source demotion crossed the SQL fence boundary; leave HTTP writes held for reconciliation", nil)
+		return fmt.Errorf("halted after source SQL demotion: %w", cause)
+	}
 	if f := e.state.SourceWriteFence; f != nil && f.Intent && !f.Released && !e.state.PromoteRequested {
 		if e.writeFencer == nil || e.state.SourceDemoted {
 			e.mu.Lock()

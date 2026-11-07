@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 type fakeSourceWriteFencer struct {
 	w                                                       *world
 	precheckErr, applyErr, heldErr, observerErr, restoreErr error
+	restoreHook                                             func()
 }
 
 func (f *fakeSourceWriteFencer) Precheck(context.Context, string) (cnpg.HBASnapshot, error) {
@@ -51,8 +53,28 @@ func (f *fakeSourceWriteFencer) Restore(_ context.Context, _ cnpg.HBASnapshot, _
 		f.w.record("sql-fence.restore-primary")
 	} else {
 		f.w.record("sql-fence.restore-replica")
+		if f.restoreHook != nil {
+			f.restoreHook()
+		}
 	}
 	return f.restoreErr
+}
+
+func TestSourceSQLFenceCleanupSaveFailureNeverRepromotesDemotedSource(t *testing.T) {
+	h, e, f := fencedHarness(t)
+	f.restoreHook = func() { e.statePath = t.TempDir() }
+	if err := e.Run(context.Background()); err == nil {
+		t.Fatal("failed cleanup persistence succeeded")
+	}
+	st := e.State()
+	if st.Outcome != OutcomeHalted || !st.WritesHeld || !st.SourceDemoted || st.PromoteRequested || !st.SourceWriteFence.Released {
+		t.Fatalf("unsafe compensation state: %+v", st)
+	}
+	for _, call := range h.w.Calls() {
+		if strings.HasPrefix(call, "src.setPrimary db-gke") || strings.HasPrefix(call, "dst.setPrimary") || call == "gw.release" {
+			t.Fatalf("post-demotion persistence failure triggered unsafe compensation: %s", call)
+		}
+	}
 }
 
 func (g *fakeGateway) SourceFenceReady(context.Context, string, string, string) (bool, error) {

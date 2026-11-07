@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/cnpg"
+	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/files"
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/plan"
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/verify"
 )
@@ -120,8 +122,23 @@ func checkTopology(src, dst *cnpg.Status) error {
 // prepare: create the target replica cluster if needed and wait until it streams.
 func (e *Engine) prepare(ctx context.Context) (map[string]any, error) {
 	ev := map[string]any{}
+	timing := map[string]int64{}
+	ev["timingMillis"] = timing
+	started, mark := time.Now(), time.Now()
+	phase := "targetLookup"
+	record := func() {
+		if phase == "" {
+			return
+		}
+		timing[phase] = time.Since(mark).Milliseconds()
+		e.emit(StepPrepare, EventMetric, "prepare timing", map[string]any{"phase": phase, "durationMillis": timing[phase]})
+		phase = ""
+	}
+	next := func(name string) { record(); phase, mark = name, time.Now() }
+	defer func() { record(); timing["total"] = time.Since(started).Milliseconds() }()
 	_, err := e.dst.Get(ctx)
 	if errors.Is(err, cnpg.ErrNotFound) {
+		next("manifestApply")
 		e.log(StepPrepare, "applying target manifest", map[string]any{"manifest": e.plan.Target.Manifest})
 		if err := e.dst.ApplyManifest(ctx, e.plan.Target.Manifest); err != nil {
 			return ev, err
@@ -133,11 +150,13 @@ func (e *Engine) prepare(ctx context.Context) (map[string]any, error) {
 
 	wctx, cancel := context.WithTimeout(ctx, e.plan.Thresholds.CatchupTimeout.Duration)
 	defer cancel()
+	next("targetHealthy")
 	d, err := e.dst.WaitFor(wctx, e.poll, (*cnpg.Status).Healthy)
 	if err != nil {
 		return ev, fmt.Errorf("target cluster not healthy: %w", err)
 	}
 	ev["target"] = d
+	next("sourceTopology")
 	var s *cnpg.Status
 	if e.plan.Source.External() {
 		if err := checkExternalTopology(e.plan.Source.Name, d); err != nil {
@@ -155,6 +174,7 @@ func (e *Engine) prepare(ctx context.Context) (map[string]any, error) {
 	// Right after CNPG reports the new cluster healthy its service may still
 	// refuse a connection or two (seen in the platform E2E: "tls error: EOF").
 	// Retry until catchupTimeout instead of failing the run on one attempt.
+	next("targetRecovery") // includes connection retries and recovery-state reads
 	rec, err := e.readRecovery(wctx, e.plan.Target.DSN, &e.dstDB)
 	if err != nil {
 		return ev, fmt.Errorf("target db: %w", err)
@@ -163,6 +183,7 @@ func (e *Engine) prepare(ctx context.Context) (map[string]any, error) {
 		return ev, errors.New("target database is writable; it must be a replica before migration")
 	}
 	if e.plan.AllowSourceRewire {
+		next("sourceRewire")
 		if err := e.prepareSourceRewire(wctx, s, d, ev); err != nil {
 			return ev, err
 		}
@@ -177,6 +198,7 @@ func (e *Engine) prepare(ctx context.Context) (map[string]any, error) {
 		e.log(StepPrepare, "WARNING: "+w, nil)
 	}
 	if a := e.plan.Target.App; a.Cold() {
+		next("stopTarget")
 		// A cold app must not run on the replica (it would fail or crash-loop
 		// on its start-up schema change); it starts after promotion.
 		if err := e.app.Stop(ctx); err != nil {
@@ -190,22 +212,46 @@ func (e *Engine) prepare(ctx context.Context) (map[string]any, error) {
 	return ev, nil
 }
 
-// presync: wait for the initial copy to catch up and do the first file copy.
+// presync: overlap the independent initial database catchup and first file copy.
+// Both must finish before the step is persisted. Delta still measures fresh lag
+// after its file copy, and fence still captures and verifies the final LSN.
 func (e *Engine) presync(ctx context.Context) (map[string]any, error) {
 	ev := map[string]any{}
-	lag, err := e.waitCaughtUp(ctx, StepPresync, e.plan.Thresholds.CatchupTimeout.Duration)
-	ev["lagBytes"] = lag
-	if err != nil {
+	if e.rclone == nil {
+		lag, err := e.waitCaughtUp(ctx, StepPresync, e.plan.Thresholds.CatchupTimeout.Duration)
+		ev["lagBytes"] = lag
 		return ev, err
 	}
-	if e.rclone != nil {
-		r, err := e.rclone.Sync(ctx, e.plan.Files.Source, e.plan.Files.Target)
-		ev["filesSync"] = r
-		if err != nil {
-			return ev, err
+	work, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var pending sync.WaitGroup
+	var lag int64
+	var copied files.SyncResult
+	var lagErr, fileErr error
+	var catchupMillis, filesMillis int64
+	start := time.Now()
+	pending.Go(func() {
+		started := time.Now()
+		lag, lagErr = e.waitCaughtUp(work, StepPresync, e.plan.Thresholds.CatchupTimeout.Duration)
+		catchupMillis = time.Since(started).Milliseconds()
+		if lagErr != nil {
+			cancel()
 		}
-	}
-	return ev, nil
+	})
+	pending.Go(func() {
+		started := time.Now()
+		copied, fileErr = e.rclone.Sync(work, e.plan.Files.Source, e.plan.Files.Target)
+		filesMillis = time.Since(started).Milliseconds()
+		if fileErr != nil {
+			cancel()
+		}
+	})
+	// Never let a cancelled file transfer continue after a checkpoint/retry or
+	// after the engine starts closing the database connections.
+	pending.Wait()
+	ev["lagBytes"], ev["filesSync"] = lag, copied
+	ev["timingMillis"] = map[string]int64{"catchup": catchupMillis, "files": filesMillis, "total": time.Since(start).Milliseconds()}
+	return ev, errors.Join(lagErr, fileErr)
 }
 
 // delta: sync files changed since presync and confirm lag is small, so the

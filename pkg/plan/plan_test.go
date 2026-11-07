@@ -1,11 +1,52 @@
 package plan
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestAllowSourceRewireContract(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		body := valid
+		if enabled {
+			body = strings.Replace(body, `"id":`, `"allowSourceRewire":true,"id":`, 1)
+		}
+		p, err := Parse([]byte(body))
+		if err != nil || p.AllowSourceRewire != enabled {
+			t.Fatalf("parse enabled=%v: plan=%+v err=%v", enabled, p, err)
+		}
+		encoded, err := json.Marshal(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(encoded, &fields); err != nil {
+			t.Fatal(err)
+		}
+		if _, present := fields["allowSourceRewire"]; present != enabled {
+			t.Fatalf("omission contract enabled=%v: %s", enabled, encoded)
+		}
+		roundTrip, err := Parse(encoded)
+		if err != nil || roundTrip.AllowSourceRewire != enabled {
+			t.Fatalf("round trip enabled=%v: %v", enabled, err)
+		}
+	}
+	for _, value := range []string{`"true"`, `1`, `{}`} {
+		body := strings.Replace(valid, `"id":`, `"allowSourceRewire":`+value+`,"id":`, 1)
+		if _, err := Parse([]byte(body)); err == nil {
+			t.Errorf("accepted non-boolean opt-in %s", value)
+		}
+	}
+	// Opting in does not bypass the source/target validation contract.
+	bad := strings.Replace(valid, `"id":`, `"allowSourceRewire":true,"id":`, 1)
+	bad = strings.Replace(bad, `"env":"eks"`, `"env":"gke"`, 1)
+	if _, err := Parse([]byte(bad)); err == nil {
+		t.Fatal("source rewire accepted identical source and target environments")
+	}
+}
 
 const valid = `{
   "id": "shop-gke-to-eks",

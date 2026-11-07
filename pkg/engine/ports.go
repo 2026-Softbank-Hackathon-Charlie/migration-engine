@@ -27,6 +27,13 @@ type Cluster interface {
 	WaitFor(ctx context.Context, interval time.Duration, cond func(*cnpg.Status) bool) (*cnpg.Status, error)
 }
 
+// SourceRewirer is optional. Legacy adapters remain valid for strict plans;
+// an opted-in run that needs a source change refuses unsupported adapters.
+// Implementations must update only replica.source with identity/version CAS.
+type SourceRewirer interface {
+	RewireSource(ctx context.Context, expected *cnpg.Status, targetSelf string) error
+}
+
 // Database is a connection to one PostgreSQL primary or standby (*pg.DB).
 type Database interface {
 	InRecovery(ctx context.Context) (bool, error)

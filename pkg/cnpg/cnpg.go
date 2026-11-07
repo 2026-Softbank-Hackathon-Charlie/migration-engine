@@ -42,16 +42,22 @@ func New(dyn dynamic.Interface, namespace, name string) *Client {
 
 // Status is the subset of the Cluster resource the engine cares about.
 type Status struct {
-	Phase          string `json:"phase"`
-	CurrentPrimary string `json:"currentPrimary"`
-	Instances      int64  `json:"instances"`
-	ReadyInstances int64  `json:"readyInstances"`
-	DemotionToken  string `json:"-"`
-	HasDemotion    bool   `json:"hasDemotionToken"`
+	// Identity and resourceVersion guard source-only rewiring against a stale
+	// observation, replacement cluster or concurrent topology change.
+	UID             string `json:"-"`
+	ResourceVersion string `json:"-"`
+	Phase           string `json:"phase"`
+	CurrentPrimary  string `json:"currentPrimary"`
+	Instances       int64  `json:"instances"`
+	ReadyInstances  int64  `json:"readyInstances"`
+	DemotionToken   string `json:"-"`
+	HasDemotion     bool   `json:"hasDemotionToken"`
 	// Distributed topology fields from spec.replica.
 	Self           string `json:"self"`
 	ReplicaPrimary string `json:"replicaPrimary"`
 	ReplicaSource  string `json:"replicaSource"`
+	// Names only: connection strings and credentials must never enter evidence.
+	ExternalClusters []string `json:"externalClusters,omitempty"`
 }
 
 // Healthy reports whether CNPG considers the cluster healthy.
@@ -82,7 +88,7 @@ func (c *Client) Get(ctx context.Context) (*Status, error) {
 }
 
 func statusFrom(obj *unstructured.Unstructured) *Status {
-	s := &Status{}
+	s := &Status{UID: string(obj.GetUID()), ResourceVersion: obj.GetResourceVersion()}
 	s.Phase, _, _ = unstructured.NestedString(obj.Object, "status", "phase")
 	s.CurrentPrimary, _, _ = unstructured.NestedString(obj.Object, "status", "currentPrimary")
 	s.Instances, _, _ = unstructured.NestedInt64(obj.Object, "spec", "instances")
@@ -95,7 +101,59 @@ func statusFrom(obj *unstructured.Unstructured) *Status {
 	}
 	s.ReplicaPrimary, _, _ = unstructured.NestedString(obj.Object, "spec", "replica", "primary")
 	s.ReplicaSource, _, _ = unstructured.NestedString(obj.Object, "spec", "replica", "source")
+	external, _, _ := unstructured.NestedSlice(obj.Object, "spec", "externalClusters")
+	for _, entry := range external {
+		if cluster, ok := entry.(map[string]any); ok {
+			if name, ok := cluster["name"].(string); ok && name != "" {
+				s.ExternalClusters = append(s.ExternalClusters, name)
+			}
+		}
+	}
 	return s
+}
+
+// HasExternalCluster reports whether a named externalCluster is configured.
+func (s *Status) HasExternalCluster(name string) bool {
+	for _, external := range s.ExternalClusters {
+		if external == name {
+			return true
+		}
+	}
+	return false
+}
+
+// RewireSource selects the healthy current primary's future upstream. It
+// changes only spec.replica.source; primary/self/promotionToken stay intact.
+// JSON Patch identity and resourceVersion tests make a concurrent change fail
+// closed. A timed-out request may have applied this metadata-only choice; a
+// retry must observe topology again instead of undoing it blindly.
+func (c *Client) RewireSource(ctx context.Context, expected *Status, targetSelf string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if expected == nil || expected.UID == "" || expected.ResourceVersion == "" {
+		return errors.New("source rewire requires cluster UID and resourceVersion")
+	}
+	if !expected.Healthy() || expected.Self == "" || expected.ReplicaPrimary != expected.Self {
+		return errors.New("source rewire requires a healthy explicitly designated topology primary")
+	}
+	if targetSelf == "" || targetSelf == expected.Self || !expected.HasExternalCluster(targetSelf) {
+		return errors.New("source rewire target must name another configured externalCluster")
+	}
+	patch, err := json.Marshal([]map[string]any{
+		{"op": "test", "path": "/metadata/uid", "value": expected.UID},
+		{"op": "test", "path": "/metadata/resourceVersion", "value": expected.ResourceVersion},
+		{"op": "test", "path": "/spec/replica/self", "value": expected.Self},
+		{"op": "test", "path": "/spec/replica/primary", "value": expected.ReplicaPrimary},
+		{"op": "add", "path": "/spec/replica/source", "value": targetSelf},
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := c.res().Patch(ctx, c.Name, types.JSONPatchType, patch, metav1.PatchOptions{FieldManager: fieldManager}); err != nil {
+		return fmt.Errorf("rewire %s/%s replica.source: %w", c.Namespace, c.Name, err)
+	}
+	return nil
 }
 
 // ApplyManifest server-side-applies a Cluster manifest (YAML) into this client's namespace.

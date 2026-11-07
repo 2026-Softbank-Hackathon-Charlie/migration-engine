@@ -27,7 +27,7 @@ func (e *Engine) precheck(ctx context.Context) (map[string]any, error) {
 	if !s.IsPrimary() {
 		return ev, fmt.Errorf("source cluster is not the topology primary (replica.primary=%q, self=%q)", s.ReplicaPrimary, s.Self)
 	}
-	if s.ReplicaSource == "" {
+	if s.ReplicaSource == "" && !e.plan.AllowSourceRewire {
 		return ev, errors.New("source spec.replica.source is empty: it must name the target's externalCluster so the source can follow the target after demotion")
 	}
 
@@ -52,8 +52,22 @@ func (e *Engine) precheck(ctx context.Context) (map[string]any, error) {
 		return ev, err
 	default:
 		ev["target"] = d
-		if err := checkTopology(s, d); err != nil {
+		if err := e.checkPreparedTopology(s, d); err != nil {
 			return ev, err
+		}
+		if e.plan.AllowSourceRewire {
+			if err := e.checkSourceRewireCapability(s, d); err != nil {
+				return ev, err
+			}
+			target, err := e.targetDB(ctx)
+			if err != nil {
+				return ev, fmt.Errorf("target db: %w", err)
+			}
+			if rec, err := target.InRecovery(ctx); err != nil {
+				return ev, err
+			} else if !rec {
+				return ev, errors.New("target database is writable; source rewire requires a replica")
+			}
 		}
 	}
 
@@ -117,7 +131,7 @@ func (e *Engine) prepare(ctx context.Context) (map[string]any, error) {
 	if err != nil {
 		return ev, err
 	}
-	if err := checkTopology(s, d); err != nil {
+	if err := e.checkPreparedTopology(s, d); err != nil {
 		return ev, err
 	}
 
@@ -130,6 +144,11 @@ func (e *Engine) prepare(ctx context.Context) (map[string]any, error) {
 	}
 	if !rec {
 		return ev, errors.New("target database is writable; it must be a replica before migration")
+	}
+	if e.plan.AllowSourceRewire {
+		if err := e.prepareSourceRewire(wctx, s, d, ev); err != nil {
+			return ev, err
+		}
 	}
 	// Replication to the old source after cutover is asynchronous, so the new
 	// primary is the only copy of the latest writes until it streams them. One

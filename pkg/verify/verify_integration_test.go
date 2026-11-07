@@ -100,6 +100,34 @@ func TestListTablesFindsPrimaryKeys(t *testing.T) {
 	}
 }
 
+// No schemas means every user schema, not just public: an app keeping its data
+// in its own schema must still be compared. System schemas and schemas that an
+// extension owns are left out.
+func TestListTablesWithoutSchemasCoversUserSchemas(t *testing.T) {
+	_, dst := pair(t)
+	ctx := context.Background()
+	if _, err := dst.Pool.Exec(ctx, `
+CREATE SCHEMA app;
+CREATE TABLE app.reservations (id bigint PRIMARY KEY);
+CREATE SCHEMA ext_owned;
+CREATE TABLE ext_owned.config (k text);
+ALTER EXTENSION plpgsql ADD SCHEMA ext_owned;`); err != nil {
+		t.Fatal(err)
+	}
+	ts, err := verify.ListTables(ctx, dst.Pool, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, tb := range ts {
+		got = append(got, tb.String())
+	}
+	want := "app.reservations,it.audit,it.order_items,it.orders"
+	if strings.Join(got, ",") != want {
+		t.Fatalf("tables = %v, want %s", got, want)
+	}
+}
+
 // Identical data must hash identically even when the two clusters use
 // different server time zones (timestamptz renders differently per session).
 func TestCompareTablesMatchesIdenticalData(t *testing.T) {

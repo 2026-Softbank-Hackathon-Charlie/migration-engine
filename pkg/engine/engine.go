@@ -301,6 +301,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 	e.mu.Lock()
 	e.state.Outcome = OutcomeSucceeded
+	e.state.FailureStep, e.state.FailureError = "", ""
 	e.mu.Unlock()
 	e.save()
 	e.emit("", EventDone, "migration succeeded", map[string]any{"downtimeMillis": e.state.DowntimeMillis})
@@ -327,6 +328,7 @@ func (e *Engine) RunStep(ctx context.Context, name string) error {
 	if name == StepFinalize {
 		e.mu.Lock()
 		e.state.Outcome = OutcomeSucceeded
+		e.state.FailureStep, e.state.FailureError = "", ""
 		e.mu.Unlock()
 		e.save()
 	}

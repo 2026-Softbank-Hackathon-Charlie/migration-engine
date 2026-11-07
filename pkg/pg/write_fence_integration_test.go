@@ -66,7 +66,7 @@ func TestSourceHBAWriteFence(t *testing.T) {
 		cfg := srcConfig.Copy()
 		admin, e := pgx.ConnectConfig(cleanup, cfg)
 		if e == nil {
-			_, _ = admin.Exec(cleanup, `DROP SCHEMA IF EXISTS pgdata CASCADE; DROP TABLE IF EXISTS public.fence_probe; DROP OWNED BY hop_fence_observer,hop_fence_writer,hop_fence_reader,hop_fence_hidden; DROP ROLE IF EXISTS hop_fence_observer,hop_fence_reader,hop_fence_writer,hop_fence_hidden,hop_fence_privileged`)
+			_, _ = admin.Exec(cleanup, `DROP FUNCTION IF EXISTS public.pg_control_system(),public.pg_control_checkpoint(); DROP SCHEMA IF EXISTS pgdata CASCADE; DROP TABLE IF EXISTS public.fence_probe; DROP OWNED BY hop_fence_observer,hop_fence_writer,hop_fence_reader,hop_fence_hidden; DROP ROLE IF EXISTS hop_fence_observer,hop_fence_reader,hop_fence_writer,hop_fence_hidden,hop_fence_privileged`)
 			_ = admin.Close(cleanup)
 		}
 	})
@@ -136,6 +136,25 @@ func TestSourceHBAWriteFence(t *testing.T) {
 	}
 	if err = fence.VerifySystemIdentifier(ctx, systemID); err != nil {
 		t.Fatal(err)
+	}
+	admin, err = pgx.ConnectConfig(ctx, srcConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = admin.Exec(ctx, `CREATE FUNCTION public.pg_control_system() RETURNS TABLE(system_identifier bigint) LANGUAGE sql AS 'SELECT 0::bigint'; CREATE FUNCTION public.pg_control_checkpoint() RETURNS TABLE(redo_lsn pg_lsn) LANGUAGE sql AS $$SELECT '0/0'::pg_lsn$$`)
+	_ = admin.Close(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = observer.Pool.Exec(ctx, `SET search_path=public,pg_catalog`); err != nil {
+		t.Fatal(err)
+	}
+	var spoofed string
+	if err = observer.Pool.QueryRow(ctx, `SELECT system_identifier::text FROM pg_control_system()`).Scan(&spoofed); err != nil || spoofed != "0" {
+		t.Fatalf("catalog-shadowing fixture not active: value=%q err=%v", spoofed, err)
+	}
+	if err = fence.VerifySystemIdentifier(ctx, systemID); err != nil {
+		t.Fatalf("application function shadowed the authoritative SQL system identifier: %v", err)
 	}
 	if lsn, e := observer.CheckpointREDOLSN(ctx); e != nil || lsn == "" || lsn == "0/0" {
 		t.Fatalf("control checkpoint lsn=%q err=%v", lsn, e)

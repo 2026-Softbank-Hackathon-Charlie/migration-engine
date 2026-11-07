@@ -66,11 +66,11 @@ func TestSourceHBAWriteFence(t *testing.T) {
 		cfg := srcConfig.Copy()
 		admin, e := pgx.ConnectConfig(cleanup, cfg)
 		if e == nil {
-			_, _ = admin.Exec(cleanup, `DROP TABLE IF EXISTS public.fence_probe; DROP OWNED BY hop_fence_observer,hop_fence_writer,hop_fence_reader; DROP ROLE IF EXISTS hop_fence_observer,hop_fence_reader,hop_fence_writer`)
+			_, _ = admin.Exec(cleanup, `DROP SCHEMA IF EXISTS pgdata CASCADE; DROP TABLE IF EXISTS public.fence_probe; DROP OWNED BY hop_fence_observer,hop_fence_writer,hop_fence_reader,hop_fence_hidden; DROP ROLE IF EXISTS hop_fence_observer,hop_fence_reader,hop_fence_writer,hop_fence_hidden`)
 			_ = admin.Close(cleanup)
 		}
 	})
-	_, err = control.Exec(ctx, `CREATE ROLE hop_fence_writer LOGIN PASSWORD 'fixture-only'; CREATE ROLE hop_fence_reader LOGIN PASSWORD 'fixture-only'; GRANT hop_fence_writer TO hop_fence_reader WITH INHERIT FALSE, SET TRUE; CREATE ROLE hop_fence_observer LOGIN PASSWORD 'fixture-only'; GRANT pg_read_all_stats,pg_signal_backend TO hop_fence_observer`)
+	_, err = control.Exec(ctx, `CREATE ROLE hop_fence_hidden LOGIN PASSWORD 'fixture-only'; CREATE ROLE hop_fence_writer LOGIN PASSWORD 'fixture-only'; CREATE ROLE hop_fence_reader LOGIN PASSWORD 'fixture-only'; GRANT hop_fence_writer TO hop_fence_reader WITH INHERIT FALSE, SET TRUE; CREATE ROLE hop_fence_observer LOGIN PASSWORD 'fixture-only'; GRANT pg_read_all_stats,pg_signal_backend TO hop_fence_observer`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestSourceHBAWriteFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = admin.Exec(ctx, `CREATE TABLE public.fence_probe(id integer PRIMARY KEY); GRANT SELECT ON public.fence_probe TO hop_fence_observer,hop_fence_writer; GRANT INSERT ON public.fence_probe TO hop_fence_writer`)
+	_, err = admin.Exec(ctx, `CREATE SCHEMA pgdata; CREATE TABLE pgdata.hidden(id integer); GRANT USAGE ON SCHEMA pgdata TO hop_fence_hidden; CREATE TABLE public.fence_probe(id integer PRIMARY KEY); GRANT SELECT ON public.fence_probe TO hop_fence_observer,hop_fence_writer; GRANT INSERT ON public.fence_probe TO hop_fence_writer`)
 	_ = admin.Close(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -91,10 +91,32 @@ func TestSourceHBAWriteFence(t *testing.T) {
 	}
 	defer observer.Close()
 	fence := &WriterFence{DB: observer, DSN: observerConfig.ConnString(), Roles: []string{"hop_fence_writer"}}
-	if err = fence.CheckRoles(ctx); err == nil {
-		t.Fatal("INHERIT FALSE / SET TRUE writer login bypassed inventory")
+	if err = fence.CheckRoles(ctx); err == nil || !strings.Contains(err.Error(), "hop_fence_reader") {
+		t.Fatalf("INHERIT FALSE / SET TRUE writer login bypassed inventory: %v", err)
 	}
 	fence.Roles = append(fence.Roles, "hop_fence_reader")
+	admin, err = pgx.ConnectConfig(ctx, srcConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = admin.Exec(ctx, `GRANT INSERT ON pgdata.hidden TO hop_fence_hidden`)
+	_ = admin.Close(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = fence.CheckRoles(ctx); err == nil || !strings.Contains(err.Error(), "hop_fence_hidden") {
+		t.Fatalf("writer with INSERT only on pgdata.hidden bypassed inventory: %v", err)
+	}
+	// Remove only this fixture grant after proving the namespace regression.
+	admin, err = pgx.ConnectConfig(ctx, srcConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = admin.Exec(ctx, `REVOKE INSERT ON pgdata.hidden FROM hop_fence_hidden`)
+	_ = admin.Close(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err = fence.Precheck(ctx); err != nil {
 		t.Fatal(err)
 	}

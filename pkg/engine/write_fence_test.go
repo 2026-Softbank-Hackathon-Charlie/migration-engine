@@ -135,10 +135,13 @@ func TestSourceSQLFenceNeverReopensAfterObserverLossOrUnknownDemotion(t *testing
 			if e.State().Outcome != OutcomeHalted || !e.State().WritesHeld {
 				t.Fatalf("unsafe state: %+v", e.State())
 			}
-			for _, call := range []string{"sql-fence.restore-primary", "sql-fence.restore-replica", "gw.release"} {
+			for _, call := range []string{"sql-fence.restore-primary", "gw.release"} {
 				if contains(h.w.Calls(), call) {
 					t.Fatalf("unsafe compensation %s", call)
 				}
+			}
+			if fault != "promotion" && contains(h.w.Calls(), "sql-fence.restore-replica") {
+				t.Fatal("read admission restored without confirmed source demotion")
 			}
 		})
 	}

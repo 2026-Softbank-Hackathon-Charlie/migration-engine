@@ -61,6 +61,7 @@ ORDER BY login.rolname`
 
 func (f *WriterFence) CheckRoles(ctx context.Context) error {
 	var observer string
+	var database string
 	var stats, signals, super, recovery bool
 	err := f.DB.Pool.QueryRow(ctx, `SELECT current_user,pg_has_role(current_user,'pg_read_all_stats','USAGE'),
 	 pg_has_role(current_user,'pg_signal_backend','USAGE'),rolsuper,pg_is_in_recovery()
@@ -70,6 +71,12 @@ func (f *WriterFence) CheckRoles(ctx context.Context) error {
 	}
 	if super || !stats || !signals || slices.Contains(f.Roles, observer) || recovery {
 		return errors.New("write fence requires a distinct non-superuser source observer with pg_read_all_stats and pg_signal_backend")
+	}
+	if err = f.DB.Pool.QueryRow(ctx, `SELECT current_database()`).Scan(&database); err != nil {
+		return err
+	}
+	if database == "postgres" || database == "template0" || database == "template1" {
+		return errors.New("source write fence refuses PostgreSQL maintenance and template databases")
 	}
 	var valid int
 	err = f.DB.Pool.QueryRow(ctx, `SELECT count(*) FROM pg_roles WHERE rolname=ANY($1)

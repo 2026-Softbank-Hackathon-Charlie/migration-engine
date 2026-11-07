@@ -140,6 +140,9 @@ func New(p *plan.Plan, opt Options) (*Engine, error) {
 		if p.Gateway.Mode != "http" || p.Target.App.Cold() {
 			return nil, errors.New("sourceWriteFence requires an HTTP gateway and a warm target")
 		}
+		if p.Source.Kind != "" && p.Source.Kind != plan.SourceCNPG || p.Target.Kind != "" && p.Target.Kind != plan.SourceCNPG {
+			return nil, errors.New("sourceWriteFence only supports CNPG endpoints with a database")
+		}
 	}
 	if err := e.configureLoad(p); err != nil {
 		return nil, err

@@ -246,10 +246,6 @@ func (e *Engine) prepareSourceWriteFence(ctx context.Context) error {
 		connect := e.connect
 		sourceDSN, targetDSN := e.plan.Source.DSN, e.plan.Target.DSN
 		e.connect = func(ctx context.Context, dsn string) (Database, error) {
-			db, err := connect(ctx, dsn)
-			if err != nil {
-				return nil, err
-			}
 			expected := ""
 			if dsn == sourceDSN {
 				expected = snapshot.SQLPeerSHA256
@@ -257,17 +253,9 @@ func (e *Engine) prepareSourceWriteFence(ctx context.Context) error {
 				expected = f.targetPeer
 			}
 			if expected != "" {
-				p, ok := db.(*pg.DB)
-				if !ok {
-					db.Close()
-					return nil, errors.New("SQL endpoint identity cannot be checked")
-				}
-				if err = p.PinTLSPeer(ctx, expected); err != nil {
-					db.Close()
-					return nil, err
-				}
+				return pg.ConnectPinned(ctx, dsn, expected)
 			}
-			return db, nil
+			return connect(ctx, dsn)
 		}
 	}
 	proof := &SourceWriteFenceState{Lease: lease, Source: snapshot, WriterRoles: slices.Clone(e.plan.SourceWriteFence.WriterRoles)}

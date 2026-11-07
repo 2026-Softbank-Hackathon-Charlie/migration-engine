@@ -64,6 +64,23 @@ func pinPeer(config *tls.Config, expected string) (*tls.Config, error) {
 // closed during this short operation. It does not install or read certificates.
 func (d *DB) PinTLSPeer(ctx context.Context, expected string) error {
 	cfg := d.Pool.Config()
+	if err := pinPoolConfig(cfg, expected); err != nil {
+		return err
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	if err = pool.Ping(ctx); err != nil {
+		pool.Close()
+		return err
+	}
+	d.Pool.Close()
+	d.Pool = pool
+	return nil
+}
+
+func pinPoolConfig(cfg *pgxpool.Config, expected string) error {
 	var err error
 	cfg.ConnConfig.TLSConfig, err = pinPeer(cfg.ConnConfig.TLSConfig, expected)
 	if err != nil {
@@ -77,15 +94,5 @@ func (d *DB) PinTLSPeer(ctx context.Context, expected string) error {
 		}
 		cfg.ConnConfig.Fallbacks[i] = &copy
 	}
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		return err
-	}
-	if err = pool.Ping(ctx); err != nil {
-		pool.Close()
-		return err
-	}
-	d.Pool.Close()
-	d.Pool = pool
 	return nil
 }

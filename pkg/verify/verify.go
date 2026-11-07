@@ -133,23 +133,6 @@ func pkExpr(t Table) string {
 	return "ROW(" + strings.Join(cols, ", ") + ")::text"
 }
 
-func pkSet(ctx context.Context, db *pgxpool.Pool, t Table) (map[string]struct{}, error) {
-	rows, err := db.Query(ctx, fmt.Sprintf("SELECT %s FROM %s AS t", pkExpr(t), t.Ident()))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	set := map[string]struct{}{}
-	for rows.Next() {
-		var k string
-		if err := rows.Scan(&k); err != nil {
-			return nil, err
-		}
-		set[k] = struct{}{}
-	}
-	return set, rows.Err()
-}
-
 // MissingResult is the source ⊆ target check of one table.
 type MissingResult struct {
 	Table   string   `json:"table"`
@@ -164,65 +147,7 @@ const maxSamples = 20
 
 // MissingRows checks that every source primary key exists on the target.
 func MissingRows(ctx context.Context, src, dst *pgxpool.Pool, tables []Table) ([]MissingResult, int64) {
-	var total int64
-	out := make([]MissingResult, 0, len(tables))
-	for _, t := range tables {
-		r := MissingResult{Table: t.String()}
-		if len(t.PK) == 0 {
-			r.Skipped = "no primary key"
-			out = append(out, r)
-			continue
-		}
-		if err := missingRows(ctx, src, dst, t, &r); err != nil {
-			r.Error = err.Error()
-		}
-		total += r.Missing
-		out = append(out, r)
-	}
-	return out, total
-}
-
-func missingRows(ctx context.Context, src, dst *pgxpool.Pool, t Table, r *MissingResult) error {
-	// Read the source first. After cutover the old source replicates the new
-	// primary, so rows written to the target between two reads can show up on
-	// the source; reading the target first would report them as missing. The
-	// target only gains rows, so every key seen on the source earlier must be
-	// on the target read afterwards.
-	keys, err := pkList(ctx, src, t)
-	if err != nil {
-		return fmt.Errorf("source: %w", err)
-	}
-	have, err := pkSet(ctx, dst, t)
-	if err != nil {
-		return fmt.Errorf("target: %w", err)
-	}
-	for _, k := range keys {
-		r.Checked++
-		if _, ok := have[k]; !ok {
-			r.Missing++
-			if len(r.Samples) < maxSamples {
-				r.Samples = append(r.Samples, k)
-			}
-		}
-	}
-	return nil
-}
-
-func pkList(ctx context.Context, db *pgxpool.Pool, t Table) ([]string, error) {
-	rows, err := db.Query(ctx, fmt.Sprintf("SELECT %s FROM %s AS t", pkExpr(t), t.Ident()))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var k string
-		if err := rows.Scan(&k); err != nil {
-			return nil, err
-		}
-		out = append(out, k)
-	}
-	return out, rows.Err()
+	return MissingRowsWithOptions(ctx, src, dst, tables, ScanOptions{})
 }
 
 // WrittenRecord is one line of the k6 success log.
@@ -280,74 +205,5 @@ func ReadWritten(path string) ([]WrittenRecord, error) {
 
 // CheckWritten verifies every recorded successful write exists on the target.
 func CheckWritten(ctx context.Context, dst *pgxpool.Pool, tables []Table, recs []WrittenRecord) WrittenResult {
-	byName := map[string]Table{}
-	for _, t := range tables {
-		byName[t.String()] = t
-		if _, dup := byName[t.Name]; !dup {
-			byName[t.Name] = t
-		}
-	}
-	group := map[string][]string{}
-	for _, r := range recs {
-		if r.Absent || len(r.Expected) != 0 {
-			continue
-		}
-		group[r.Table] = append(group[r.Table], r.PK)
-	}
-	var res WrittenResult
-	for _, r := range recs {
-		if !r.Absent && len(r.Expected) == 0 {
-			continue
-		}
-		t, ok := byName[r.Table]
-		if !ok || len(t.PK) == 0 {
-			res.Errors = append(res.Errors, r.Table+": unknown table or no primary key")
-			res.Missing++
-			continue
-		}
-		var count int64
-		var matches bool
-		query := fmt.Sprintf("SELECT count(*), coalesce(bool_and(to_jsonb(t) = $2::jsonb), false) FROM %s AS t WHERE %s = $1", t.Ident(), pkExpr(t))
-		expected := string(r.Expected)
-		if expected == "" {
-			expected = "null"
-		}
-		err := dst.QueryRow(ctx, query, r.PK, expected).Scan(&count, &matches)
-		if err != nil {
-			res.Errors = append(res.Errors, r.Table+": "+err.Error())
-			res.Missing++
-			continue
-		}
-		res.Checked++
-		if (r.Absent && count != 0) || (!r.Absent && (count != 1 || !matches)) {
-			res.Missing++
-			if len(res.Samples) < maxSamples {
-				res.Samples = append(res.Samples, t.String()+":"+r.PK)
-			}
-		}
-	}
-	for name, pks := range group {
-		t, ok := byName[name]
-		if !ok || len(t.PK) == 0 {
-			res.Errors = append(res.Errors, fmt.Sprintf("%s: unknown table or no primary key (%d records unchecked)", name, len(pks)))
-			res.Missing += int64(len(pks))
-			continue
-		}
-		have, err := pkSet(ctx, dst, t)
-		if err != nil {
-			res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", name, err))
-			res.Missing += int64(len(pks))
-			continue
-		}
-		for _, pk := range pks {
-			res.Checked++
-			if _, ok := have[pk]; !ok {
-				res.Missing++
-				if len(res.Samples) < maxSamples {
-					res.Samples = append(res.Samples, t.String()+":"+pk)
-				}
-			}
-		}
-	}
-	return res
+	return CheckWrittenWithOptions(ctx, dst, tables, recs, ScanOptions{})
 }

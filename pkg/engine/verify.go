@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/files"
+	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/loadguard"
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/pg"
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/plan"
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/verify"
@@ -26,12 +27,28 @@ type Report struct {
 // Verify runs the post-cutover checks. It is also usable standalone (CLI `verify`).
 // rc may be nil when files are not migrated.
 func Verify(ctx context.Context, p *plan.Plan, src, dst *pg.DB, rc FileSyncer) (*Report, error) {
+	var options verify.ScanOptions
+	policy, err := loadguard.FromEnv()
+	if err != nil {
+		return nil, err
+	}
+	if policy != nil {
+		guard, err := loadguard.New(policy, endpointScope(p.Target), nil)
+		if err != nil {
+			return nil, err
+		}
+		options = scanOptions(guard)
+	}
+	return verifyWithOptions(ctx, p, src, dst, rc, options)
+}
+
+func verifyWithOptions(ctx context.Context, p *plan.Plan, src, dst *pg.DB, rc FileSyncer, options verify.ScanOptions) (*Report, error) {
 	rep := &Report{Durability: "asynchronous; planned return requires reachable primary and WAL; environment-loss RPO=0 unsupported"}
 	tables, err := verify.ListTables(ctx, src.Pool, p.Verify.Schemas, p.Verify.Tables)
 	if err != nil {
 		return rep, fmt.Errorf("list tables: %w", err)
 	}
-	rep.Tables, rep.MissingRows = verify.MissingRows(ctx, src.Pool, dst.Pool, tables)
+	rep.Tables, rep.MissingRows = verify.MissingRowsWithOptions(ctx, src.Pool, dst.Pool, tables, options)
 	if rep.MissingRows > 0 {
 		rep.Problems = append(rep.Problems, fmt.Sprintf("%d source rows missing on target", rep.MissingRows))
 	}
@@ -46,8 +63,11 @@ func Verify(ctx context.Context, p *plan.Plan, src, dst *pg.DB, rc FileSyncer) (
 		if err != nil {
 			rep.Problems = append(rep.Problems, "written records: "+err.Error())
 		} else {
-			w := verify.CheckWritten(ctx, dst.Pool, tables, recs)
+			w := verify.CheckWrittenWithOptions(ctx, dst.Pool, tables, recs, options)
 			rep.Written = &w
+			if len(w.Errors) > 0 {
+				rep.Problems = append(rep.Problems, "written verification incomplete or failed")
+			}
 			if w.Missing > 0 {
 				rep.Problems = append(rep.Problems, fmt.Sprintf("%d of %d k6-confirmed writes missing on target", w.Missing, w.Checked+int64(len(w.Errors))))
 			}

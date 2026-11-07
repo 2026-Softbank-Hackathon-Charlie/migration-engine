@@ -26,6 +26,7 @@ import (
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/files"
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/gateway"
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/kube"
+	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/loadguard"
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/plan"
 )
 
@@ -97,11 +98,12 @@ type Options struct {
 
 // Engine runs one migration.
 type Engine struct {
-	plan      *plan.Plan
-	state     *State
-	statePath string
-	emitFn    func(Event)
-	mu        sync.Mutex
+	sourceLoad, targetLoad *loadguard.Controller
+	plan                   *plan.Plan
+	state                  *State
+	statePath              string
+	emitFn                 func(Event)
+	mu                     sync.Mutex
 
 	src, dst     Cluster
 	srcDB, dstDB Database
@@ -125,6 +127,9 @@ func New(p *plan.Plan, opt Options) (*Engine, error) {
 		opt.StateDir = filepath.Join(".hopcharlie", "runs")
 	}
 	e := &Engine{plan: p, emitFn: opt.Emit, connect: opt.Connect, poll: opt.PollInterval}
+	if err := e.configureLoad(p); err != nil {
+		return nil, err
+	}
 	if e.connect == nil {
 		e.connect = connectPG
 	}
@@ -165,7 +170,7 @@ func New(p *plan.Plan, opt Options) (*Engine, error) {
 	}
 	e.verifier = opt.Verifier
 	if e.verifier == nil {
-		e.verifier = sqlVerifier{plan: p, rc: e.rclone}
+		e.verifier = sqlVerifier{plan: p, rc: e.rclone, options: scanOptions(e.targetLoad)}
 	}
 	if a := p.Target.App; a.Cold() {
 		e.app, e.prober = opt.App, opt.Prober
@@ -428,7 +433,7 @@ func (e *Engine) runStep(ctx context.Context, name string) error {
 	e.save()
 	e.emit(name, EventStepStarted, "", nil)
 
-	ev, err := stepFuncs[name](e, ctx)
+	ev, err := e.guardedStep(ctx, name)
 
 	end := time.Now().UTC()
 	e.mu.Lock()

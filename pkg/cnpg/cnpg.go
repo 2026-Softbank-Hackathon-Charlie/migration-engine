@@ -44,14 +44,15 @@ func New(dyn dynamic.Interface, namespace, name string) *Client {
 type Status struct {
 	// Identity and resourceVersion guard source-only rewiring against a stale
 	// observation, replacement cluster or concurrent topology change.
-	UID             string `json:"-"`
-	ResourceVersion string `json:"-"`
-	Phase           string `json:"phase"`
-	CurrentPrimary  string `json:"currentPrimary"`
-	Instances       int64  `json:"instances"`
-	ReadyInstances  int64  `json:"readyInstances"`
-	DemotionToken   string `json:"-"`
-	HasDemotion     bool   `json:"hasDemotionToken"`
+	UID              string `json:"-"`
+	ResourceVersion  string `json:"-"`
+	Phase            string `json:"phase"`
+	CurrentPrimary   string `json:"currentPrimary"`
+	SystemIdentifier string `json:"systemIdentifier,omitempty"`
+	Instances        int64  `json:"instances"`
+	ReadyInstances   int64  `json:"readyInstances"`
+	DemotionToken    string `json:"-"`
+	HasDemotion      bool   `json:"hasDemotionToken"`
 	// Distributed topology fields from spec.replica.
 	Self           string `json:"self"`
 	ReplicaPrimary string `json:"replicaPrimary"`
@@ -91,6 +92,10 @@ func statusFrom(obj *unstructured.Unstructured) *Status {
 	s := &Status{UID: string(obj.GetUID()), ResourceVersion: obj.GetResourceVersion()}
 	s.Phase, _, _ = unstructured.NestedString(obj.Object, "status", "phase")
 	s.CurrentPrimary, _, _ = unstructured.NestedString(obj.Object, "status", "currentPrimary")
+	s.SystemIdentifier, _, _ = unstructured.NestedString(obj.Object, "status", "systemID")
+	if s.SystemIdentifier == "" {
+		s.SystemIdentifier, _, _ = unstructured.NestedString(obj.Object, "status", "systemIdentifier")
+	}
 	s.Instances, _, _ = unstructured.NestedInt64(obj.Object, "spec", "instances")
 	s.ReadyInstances, _, _ = unstructured.NestedInt64(obj.Object, "status", "readyInstances")
 	s.DemotionToken, _, _ = unstructured.NestedString(obj.Object, "status", "demotionToken")

@@ -19,6 +19,7 @@ type SourceWriteFencer interface {
 	Apply(context.Context, cnpg.HBASnapshot, string) (int, error)
 	AssertHeld(context.Context, cnpg.HBASnapshot, string) error
 	ObserverAlive(context.Context) error
+	ConfirmReadOnlySource(context.Context, Database, cnpg.HBASnapshot, string) (string, error)
 	Restore(context.Context, cnpg.HBASnapshot, string, bool) error
 }
 
@@ -51,6 +52,9 @@ func (f *sourceHBAFence) Precheck(ctx context.Context, lease string) (cnpg.HBASn
 		return snapshot, err
 	}
 	if err = f.pg.Precheck(ctx); err != nil {
+		return snapshot, err
+	}
+	if err = f.pg.VerifySystemIdentifier(ctx, snapshot.SystemIdentifier); err != nil {
 		return snapshot, err
 	}
 	if err = f.cluster.DryRunWriteFence(ctx, snapshot, lease, f.roles); err != nil {
@@ -91,6 +95,43 @@ func (f *sourceHBAFence) AssertHeld(ctx context.Context, snapshot cnpg.HBASnapsh
 
 func (f *sourceHBAFence) ObserverAlive(ctx context.Context) error { return f.pg.Pinned(ctx) }
 
+func (f *sourceHBAFence) ConfirmReadOnlySource(ctx context.Context, db Database, snapshot cnpg.HBASnapshot, token string) (string, error) {
+	p, ok := db.(*pg.DB)
+	if !ok {
+		return "", errors.New("cannot identify the demoted source observer")
+	}
+	s, err := f.cluster.Get(ctx)
+	if err != nil {
+		return "", err
+	}
+	if s.UID != snapshot.UID || s.SystemIdentifier != snapshot.SystemIdentifier || s.IsPrimary() || s.Instances != 1 {
+		return "", errors.New("source identity or topology is not the observed demoted cluster")
+	}
+	f.pg.DB = p
+	if err = f.pg.VerifySystemIdentifier(ctx, snapshot.SystemIdentifier); err != nil {
+		return "", err
+	}
+	recovery, err := p.InRecovery(ctx)
+	if err != nil || !recovery {
+		return "", errors.New("source SQL recovery is not confirmed after demotion")
+	}
+	// The source replay position can be NULL or lag behind its final shutdown
+	// checkpoint. It is an observation, never the final commit barrier itself.
+	checkpoint, err := cnpg.DemotionCheckpoint(token, snapshot.SystemIdentifier)
+	if err != nil {
+		return "", err
+	}
+	replayed, err := p.WALPosition(ctx)
+	if err != nil {
+		return "", err
+	}
+	diff, err := p.LSNDiff(ctx, replayed, checkpoint)
+	if err != nil || diff < 0 {
+		return "", errors.New("demoted source has not replayed its token shutdown checkpoint")
+	}
+	return checkpoint, nil
+}
+
 func (f *sourceHBAFence) Restore(ctx context.Context, snapshot cnpg.HBASnapshot, lease string, primary bool) error {
 	recovery, err := f.pg.DB.InRecovery(ctx)
 	if err != nil || recovery == primary {
@@ -114,12 +155,13 @@ func (f *sourceHBAFence) Restore(ctx context.Context, snapshot cnpg.HBASnapshot,
 // SourceWriteFenceState is persisted before the first external patch. The HBA
 // source text and any authentication options never enter run state or events.
 type SourceWriteFenceState struct {
-	Lease       string           `json:"lease"`
-	Source      cnpg.HBASnapshot `json:"source"`
-	WriterRoles []string         `json:"writerRoles"`
-	Intent      bool             `json:"intent"`
-	Active      bool             `json:"active"`
-	Released    bool             `json:"released"`
+	Lease         string           `json:"lease"`
+	Source        cnpg.HBASnapshot `json:"source"`
+	WriterRoles   []string         `json:"writerRoles"`
+	Intent        bool             `json:"intent"`
+	Active        bool             `json:"active"`
+	Released      bool             `json:"released"`
+	FinalFenceLSN string           `json:"finalFenceLsn,omitempty"`
 }
 
 func (e *Engine) prepareSourceWriteFence(ctx context.Context) error {
@@ -161,6 +203,9 @@ func (e *Engine) persistWriteFence(proof *SourceWriteFenceState) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.state.SourceWriteFence = proof
+	if proof.FinalFenceLSN != "" {
+		e.state.FenceLSN = proof.FinalFenceLSN
+	}
 	if err := e.state.save(e.statePath); err != nil {
 		return fmt.Errorf("save source write fence intent: %w", err)
 	}
@@ -168,7 +213,10 @@ func (e *Engine) persistWriteFence(proof *SourceWriteFenceState) error {
 }
 
 type sourceFenceGateway interface {
-	SourceFenceReady(context.Context, string, string) (bool, error)
+	SourceFenceSupported(context.Context) error
+	AcquireSourceReadFence(context.Context, string, string) error
+	SourceFenceReady(context.Context, string, string, string) (bool, error)
+	ReleaseSourceReadFence(context.Context, string, string) error
 }
 
 func (e *Engine) acquireSourceWriteFence(ctx context.Context) (map[string]any, error) {
@@ -179,8 +227,15 @@ func (e *Engine) acquireSourceWriteFence(ctx context.Context) (map[string]any, e
 	}
 	tctx, cancel := context.WithTimeout(ctx, e.plan.SourceWriteFence.Timeout.Duration)
 	defer cancel()
+	proof.Intent = true
+	if err := e.persistWriteFence(&proof); err != nil {
+		return nil, err
+	}
+	if err := gw.AcquireSourceReadFence(tctx, e.plan.Gateway.SourceBackend, proof.Lease); err != nil {
+		return nil, err
+	}
 	for {
-		ready, err := gw.SourceFenceReady(tctx, e.plan.Gateway.SourceBackend, e.plan.Gateway.TargetBackend)
+		ready, err := gw.SourceFenceReady(tctx, e.plan.Gateway.SourceBackend, e.plan.Gateway.TargetBackend, proof.Lease)
 		if err != nil {
 			return nil, err
 		}
@@ -192,10 +247,6 @@ func (e *Engine) acquireSourceWriteFence(ctx context.Context) (map[string]any, e
 			return nil, errors.New("source write fence needs all reads on the warm target and no in-flight reads")
 		case <-time.After(e.poll):
 		}
-	}
-	proof.Intent = true
-	if err := e.persistWriteFence(&proof); err != nil {
-		return nil, err
 	}
 	n, err := e.writeFencer.Apply(tctx, proof.Source, proof.Lease)
 	if err != nil {
@@ -228,6 +279,13 @@ func (e *Engine) restoreSourceWriteFence(ctx context.Context, primary bool) erro
 		return errors.New("source SQL write fence requires operator reconciliation after process restart")
 	}
 	if err := e.writeFencer.Restore(ctx, p.Source, p.Lease, primary); err != nil {
+		return err
+	}
+	gw, ok := e.gw.(sourceFenceGateway)
+	if !ok {
+		return errors.New("read exclusion owner cannot be safely released")
+	}
+	if err := gw.ReleaseSourceReadFence(ctx, e.plan.Gateway.SourceBackend, p.Lease); err != nil {
 		return err
 	}
 	copy := *p

@@ -18,6 +18,7 @@ func fenceFixture(t *testing.T) (*Client, HBASnapshot) {
 	o := cluster("source", map[string]any{"self": "source", "primary": "source", "source": "target"}, healthy())
 	o.SetUID(types.UID("source-uid"))
 	o.SetResourceVersion("7")
+	_ = unstructured.SetNestedField(o.Object, "123456789", "status", "systemIdentifier")
 	// An authentication option must stay out of persisted evidence.
 	_ = unstructured.SetNestedStringSlice(o.Object, []string{"host all all 10.0.0.0/8 ldap ldapbindpasswd=do-not-record"}, "spec", "postgresql", "pg_hba")
 	c := New(newFake(o), "shop", "source")

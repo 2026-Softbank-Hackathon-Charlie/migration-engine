@@ -17,8 +17,10 @@ import (
 func (e *Engine) precheck(ctx context.Context) (map[string]any, error) {
 	ev := map[string]any{}
 	if e.plan.SourceWriteFence != nil {
-		if _, ok := e.gw.(sourceFenceGateway); !ok {
+		if gw, ok := e.gw.(sourceFenceGateway); !ok {
 			return ev, errors.New("gateway cannot report source read drain")
+		} else if err := gw.SourceFenceSupported(ctx); err != nil {
+			return ev, err
 		}
 		if err := e.prepareSourceWriteFence(ctx); err != nil {
 			return ev, fmt.Errorf("source SQL write fence precheck: %w", err)
@@ -274,6 +276,9 @@ func (e *Engine) fence(ctx context.Context) (map[string]any, error) {
 	}
 	e.setFlags(func(s *State) { s.FenceLSN = lsn })
 	ev["fenceLsn"] = lsn
+	if e.plan.SourceWriteFence != nil {
+		ev["fenceLsnKind"] = "provisional_until_source_sql_recovery"
+	}
 
 	if e.rclone != nil {
 		r, err := e.rclone.Sync(ctx, e.plan.Files.Source, e.plan.Files.Target)
@@ -317,7 +322,7 @@ func (e *Engine) switchover(ctx context.Context) (map[string]any, error) {
 	}
 
 	// 2. Gate: both sides frozen at the same point must be identical.
-	if *e.plan.Verify.FenceGate {
+	if *e.plan.Verify.FenceGate && e.plan.SourceWriteFence == nil {
 		start := time.Now()
 		results, ok, err := e.verifier.FenceGate(tctx, e.srcDB, e.dstDB)
 		if err != nil {
@@ -363,6 +368,49 @@ func (e *Engine) switchover(ctx context.Context) (map[string]any, error) {
 		return ev, fmt.Errorf("waiting for demotion token: %w", err)
 	}
 	ev["demotionToken"] = true
+	if e.plan.SourceWriteFence != nil {
+		// HBA admission plus a zero-session snapshot does not observe a backend
+		// still authenticating. CNPG's completed demotion and actual SQL recovery
+		// are the hard barrier. The final WAL marker comes from CNPG's shutdown
+		// checkpoint token, not a potentially stale source replay observation.
+		if err = e.waitRecovery(tctx, e.plan.Source.DSN, &e.srcDB, true); err != nil {
+			return ev, fmt.Errorf("source SQL is not reachable in recovery before target promotion: %w", err)
+		}
+		proof := *e.state.SourceWriteFence
+		finalLSN, ferr := e.writeFencer.ConfirmReadOnlySource(tctx, e.srcDB, proof.Source, demoted.DemotionToken)
+		if ferr != nil {
+			return ev, fmt.Errorf("source final read-only WAL position is not proven: %w", ferr)
+		}
+		if finalLSN == "" {
+			return ev, errors.New("source final read-only WAL position is empty")
+		}
+		proof.FinalFenceLSN = finalLSN
+		if err = e.persistWriteFence(&proof); err != nil {
+			return ev, err
+		}
+		ev["sourceSqlRecoveryConfirmed"], ev["finalFenceLsn"] = true, finalLSN
+		ev["fenceLsn"] = finalLSN
+		if _, err = e.waitReplayed(tctx, finalLSN); err != nil {
+			return ev, fmt.Errorf("target did not replay final demoted-source LSN: %w", err)
+		}
+		if *e.plan.Verify.FenceGate {
+			results, ok, gerr := e.verifier.FenceGate(tctx, e.srcDB, e.dstDB)
+			if gerr != nil {
+				return ev, fmt.Errorf("post-demotion fence gate: %w", gerr)
+			}
+			ev["fenceGate"] = map[string]any{"tables": results, "ok": ok, "afterSourceDemotion": true}
+			if !ok {
+				return ev, errors.New("post-demotion fence gate data mismatch; leave both roles for operator reconciliation")
+			}
+		}
+		lap("finalReadonlyFence")
+		// The source now rejects writes through PostgreSQL recovery. Allow source
+		// fallback reads while the target performs its promotion restart.
+		if err = e.restoreSourceWriteFence(tctx, false); err != nil {
+			return ev, fmt.Errorf("restore read admission on confirmed source replica: %w", err)
+		}
+		ev["sourceReadAdmissionRestoredOnReplica"] = true
+	}
 
 	// 4. Promote target. From here on there is no automatic rollback.
 	e.setFlags(func(s *State) { s.PromoteRequested = true })
@@ -522,6 +570,11 @@ func (e *Engine) cutover(ctx context.Context) (map[string]any, error) {
 	if e.plan.SourceWriteFence != nil {
 		if err := e.waitRecovery(ctx, e.plan.Source.DSN, &e.srcDB, true); err != nil {
 			return ev, fmt.Errorf("source SQL role before write fence cleanup: %w", err)
+		}
+		if s, err := e.src.Get(ctx); err != nil {
+			return ev, err
+		} else if _, err = e.writeFencer.ConfirmReadOnlySource(ctx, e.srcDB, e.state.SourceWriteFence.Source, s.DemotionToken); err != nil {
+			return ev, err
 		}
 		if err := e.restoreSourceWriteFence(ctx, false); err != nil {
 			return ev, fmt.Errorf("remove source SQL fence only after confirmed demotion: %w", err)

@@ -20,9 +20,10 @@ const WriteFenceAnnotation = "hopcharlie.dev/write-fence-lease"
 
 // HBASnapshot persists only identity and a hash. HBA options may contain secrets.
 type HBASnapshot struct {
-	UID    string `json:"uid"`
-	Hash   string `json:"originalHbaHash"`
-	Absent bool   `json:"originalHbaAbsent"`
+	UID              string `json:"uid"`
+	Hash             string `json:"originalHbaHash"`
+	Absent           bool   `json:"originalHbaAbsent"`
+	SystemIdentifier string `json:"systemIdentifier"`
 }
 
 var writerRole = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
@@ -62,14 +63,14 @@ func (c *Client) InspectWriteFence(ctx context.Context) (HBASnapshot, error) {
 	if err != nil {
 		return HBASnapshot{}, err
 	}
-	if !statusFrom(obj).Healthy() || !statusFrom(obj).IsPrimary() || obj.GetUID() == "" {
+	if !statusFrom(obj).Healthy() || !statusFrom(obj).IsPrimary() || obj.GetUID() == "" || statusFrom(obj).SystemIdentifier == "" {
 		return HBASnapshot{}, errors.New("write fence requires an identified healthy source primary")
 	}
 	if _, exists := obj.GetAnnotations()[WriteFenceAnnotation]; exists {
 		return HBASnapshot{}, errors.New("source already has a write fence owner")
 	}
 	rules, absent, err := readHBA(obj)
-	return HBASnapshot{UID: string(obj.GetUID()), Hash: hbaHash(rules), Absent: absent}, err
+	return HBASnapshot{UID: string(obj.GetUID()), Hash: hbaHash(rules), Absent: absent, SystemIdentifier: statusFrom(obj).SystemIdentifier}, err
 }
 
 // SetWriteFence changes only the user HBA prefix and its ownership annotation.

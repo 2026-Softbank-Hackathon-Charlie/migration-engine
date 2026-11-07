@@ -24,27 +24,40 @@ type WriterFence struct {
 	pid   int32
 }
 
+func (f *WriterFence) VerifySystemIdentifier(ctx context.Context, expected string) error {
+	var actual string
+	if err := f.DB.Pool.QueryRow(ctx, `SELECT system_identifier::text FROM pg_control_system()`).Scan(&actual); err != nil {
+		return fmt.Errorf("source system identifier cannot be observed: %w", err)
+	}
+	if expected == "" || actual != expected {
+		return errors.New("source PostgreSQL system identifier disagrees with the identified CNPG cluster")
+	}
+	return nil
+}
+
 // The check is conservative: uncertain function or membership authority blocks
 // the run. Superusers are a separate administrator trust boundary, not fenced
 // application writers. Unix-socket peer access inside a database Pod is likewise
 // outside a TCP application fence.
-const potentialWritersSQL = `SELECT r.rolname FROM pg_roles r
-WHERE r.rolcanlogin AND NOT r.rolsuper AND (
- r.rolcreaterole OR r.rolcreatedb OR r.rolbypassrls OR
+const potentialWritersSQL = `SELECT login.rolname FROM pg_roles login
+WHERE login.rolcanlogin AND NOT login.rolsuper AND EXISTS (
+ SELECT 1 FROM pg_roles r WHERE
+ (r.oid=login.oid OR pg_has_role(login.oid,r.oid,'SET') OR pg_has_role(login.oid,r.oid,'USAGE')) AND (
+ r.rolsuper OR r.rolcreaterole OR r.rolcreatedb OR r.rolbypassrls OR
  has_database_privilege(r.oid,current_database(),'CREATE') OR
- EXISTS(SELECT 1 FROM pg_namespace n WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema'
+ EXISTS(SELECT 1 FROM pg_namespace n WHERE left(n.nspname,3)<>'pg_' AND n.nspname<>'information_schema'
  AND has_schema_privilege(r.oid,n.oid,'CREATE')) OR
  EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
- WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema' AND c.relkind IN ('r','p','v','m','f')
+ WHERE left(n.nspname,3)<>'pg_' AND n.nspname<>'information_schema' AND c.relkind IN ('r','p','v','m','f')
  AND (has_table_privilege(r.oid,c.oid,'INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER')
  OR has_any_column_privilege(r.oid,c.oid,'INSERT,UPDATE') OR pg_has_role(r.oid,c.relowner,'USAGE'))) OR
  EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
- WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema' AND c.relkind='S'
+ WHERE left(n.nspname,3)<>'pg_' AND n.nspname<>'information_schema' AND c.relkind='S'
  AND has_sequence_privilege(r.oid,c.oid,'USAGE,UPDATE')) OR
  EXISTS(SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
- WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema' AND p.prosecdef
- AND has_function_privilege(r.oid,p.oid,'EXECUTE')))
-ORDER BY r.rolname`
+ WHERE left(n.nspname,3)<>'pg_' AND n.nspname<>'information_schema' AND p.prosecdef
+ AND has_function_privilege(r.oid,p.oid,'EXECUTE'))))
+ORDER BY login.rolname`
 
 func (f *WriterFence) CheckRoles(ctx context.Context) error {
 	var observer string

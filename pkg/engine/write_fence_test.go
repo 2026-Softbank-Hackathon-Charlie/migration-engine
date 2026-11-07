@@ -34,6 +34,18 @@ func (f *fakeSourceWriteFencer) AssertHeld(context.Context, cnpg.HBASnapshot, st
 	return f.heldErr
 }
 func (f *fakeSourceWriteFencer) ObserverAlive(context.Context) error { return f.observerErr }
+func (f *fakeSourceWriteFencer) ConfirmReadOnlySource(ctx context.Context, db Database, _ cnpg.HBASnapshot, _ string) (string, error) {
+	f.w.record("sql-fence.readonly")
+	recovery, err := db.InRecovery(ctx)
+	if err != nil || !recovery {
+		return "", errors.New("source not read-only")
+	}
+	f.w.mu.Lock()
+	f.w.srcDB.pos = 3000
+	f.w.dstDB.pos = 3000
+	f.w.mu.Unlock()
+	return db.WALPosition(ctx)
+}
 func (f *fakeSourceWriteFencer) Restore(_ context.Context, _ cnpg.HBASnapshot, _ string, primary bool) error {
 	if primary {
 		f.w.record("sql-fence.restore-primary")
@@ -43,8 +55,17 @@ func (f *fakeSourceWriteFencer) Restore(_ context.Context, _ cnpg.HBASnapshot, _
 	return f.restoreErr
 }
 
-func (g *fakeGateway) SourceFenceReady(context.Context, string, string) (bool, error) {
+func (g *fakeGateway) SourceFenceReady(context.Context, string, string, string) (bool, error) {
 	return true, nil
+}
+func (g *fakeGateway) SourceFenceSupported(context.Context) error { return nil }
+func (g *fakeGateway) AcquireSourceReadFence(context.Context, string, string) error {
+	g.w.record("gw.exclude-source-reads")
+	return nil
+}
+func (g *fakeGateway) ReleaseSourceReadFence(context.Context, string, string) error {
+	g.w.record("gw.release-source-reads")
+	return nil
 }
 
 func fencedHarness(t *testing.T) (*harness, *Engine, *fakeSourceWriteFencer) {
@@ -63,10 +84,10 @@ func TestSourceSQLFenceOrdersDrainBeforeMarkerAndRestoresOnlyReplica(t *testing.
 	if err := e.Run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if e.State().FenceLSN != "2000" {
+	if e.State().FenceLSN != "3000" {
 		t.Fatal("WAL marker was read before SQL clients drained")
 	}
-	assertOrder(t, h.w.Calls(), "gw.hold", "sql-fence.apply", "sql-fence.held", `src.setPrimary db-eks token=""`, `dst.setPrimary db-eks token="tok-2000"`, "sql-fence.restore-replica", "gw.route eks", "gw.release")
+	assertOrder(t, h.w.Calls(), "gw.hold", "sql-fence.apply", "sql-fence.held", `src.setPrimary db-eks token=""`, "sql-fence.readonly", "verify.gate", "sql-fence.restore-replica", `dst.setPrimary db-eks token="tok-2000"`, "gw.route eks", "gw.release")
 	if !e.State().SourceWriteFence.Released {
 		t.Fatal("fence release proof not persisted")
 	}
@@ -84,8 +105,8 @@ func TestSourceSQLFenceUnsupportedPrivilegeFailsBeforeHold(t *testing.T) {
 }
 
 func TestSourceSQLFenceBeforePromotionFailureRestoresBeforeRelease(t *testing.T) {
-	h, e, _ := fencedHarness(t)
-	h.w.ver.gateOK = false
+	h, e, f := fencedHarness(t)
+	f.heldErr = errors.New("a transient source admission probe failed before demotion")
 	if err := e.Run(context.Background()); err == nil {
 		t.Fatal("bad gate succeeded")
 	}

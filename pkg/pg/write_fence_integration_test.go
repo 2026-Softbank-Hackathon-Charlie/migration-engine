@@ -66,11 +66,11 @@ func TestSourceHBAWriteFence(t *testing.T) {
 		cfg := srcConfig.Copy()
 		admin, e := pgx.ConnectConfig(cleanup, cfg)
 		if e == nil {
-			_, _ = admin.Exec(cleanup, `DROP TABLE IF EXISTS public.fence_probe; DROP OWNED BY hop_fence_observer,hop_fence_writer; DROP ROLE IF EXISTS hop_fence_observer,hop_fence_writer`)
+			_, _ = admin.Exec(cleanup, `DROP TABLE IF EXISTS public.fence_probe; DROP OWNED BY hop_fence_observer,hop_fence_writer,hop_fence_reader; DROP ROLE IF EXISTS hop_fence_observer,hop_fence_reader,hop_fence_writer`)
 			_ = admin.Close(cleanup)
 		}
 	})
-	_, err = control.Exec(ctx, `CREATE ROLE hop_fence_writer LOGIN PASSWORD 'fixture-only'; CREATE ROLE hop_fence_observer LOGIN PASSWORD 'fixture-only'; GRANT pg_read_all_stats,pg_signal_backend TO hop_fence_observer`)
+	_, err = control.Exec(ctx, `CREATE ROLE hop_fence_writer LOGIN PASSWORD 'fixture-only'; CREATE ROLE hop_fence_reader LOGIN PASSWORD 'fixture-only'; GRANT hop_fence_writer TO hop_fence_reader WITH INHERIT FALSE, SET TRUE; CREATE ROLE hop_fence_observer LOGIN PASSWORD 'fixture-only'; GRANT pg_read_all_stats,pg_signal_backend TO hop_fence_observer`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,6 +91,10 @@ func TestSourceHBAWriteFence(t *testing.T) {
 	}
 	defer observer.Close()
 	fence := &WriterFence{DB: observer, DSN: observerConfig.ConnString(), Roles: []string{"hop_fence_writer"}}
+	if err = fence.CheckRoles(ctx); err == nil {
+		t.Fatal("INHERIT FALSE / SET TRUE writer login bypassed inventory")
+	}
+	fence.Roles = append(fence.Roles, "hop_fence_reader")
 	if err = fence.Precheck(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +115,21 @@ func TestSourceHBAWriteFence(t *testing.T) {
 	if err = fence.Rejected(ctx); err == nil {
 		t.Fatal("a password rejection was mistaken for an HBA fence")
 	}
-	writeHBA("host all hop_fence_writer 0.0.0.0/0 reject\nhost all hop_fence_writer ::/0 reject\n" + original)
+	readerConfig := writerConfig.Copy()
+	readerConfig.User = "hop_fence_reader"
+	reader, err := pgx.ConnectConfig(ctx, readerConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close(context.Background())
+	readerTx, err := reader.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = readerTx.Exec(ctx, `SET ROLE hop_fence_writer; INSERT INTO public.fence_probe VALUES(2)`); err != nil {
+		t.Fatal(err)
+	}
+	writeHBA("host all hop_fence_writer 0.0.0.0/0 reject\nhost all hop_fence_writer ::/0 reject\nhost all hop_fence_reader 0.0.0.0/0 reject\nhost all hop_fence_reader ::/0 reject\n" + original)
 	for fence.Rejected(ctx) != nil {
 		select {
 		case <-ctx.Done():
@@ -120,11 +138,14 @@ func TestSourceHBAWriteFence(t *testing.T) {
 		}
 	}
 	n, err := fence.Drain(ctx)
-	if err != nil || n != 1 {
+	if err != nil || n != 2 {
 		t.Fatalf("drain=%d err=%v", n, err)
 	}
 	if err = tx.Commit(ctx); err == nil {
 		t.Fatal("an existing direct writer committed through the fence")
+	}
+	if err = readerTx.Commit(ctx); err == nil {
+		t.Fatal("SET ROLE writer session committed through the fence")
 	}
 	var count int
 	if err = observer.Pool.QueryRow(ctx, `SELECT count(*) FROM public.fence_probe`).Scan(&count); err != nil || count != 0 {

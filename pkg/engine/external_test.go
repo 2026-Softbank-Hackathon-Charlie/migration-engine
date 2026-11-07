@@ -449,7 +449,8 @@ func TestExternalCancelDuringFence(t *testing.T) {
 	e := h.engine(t, "")
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
-		for !contains(h.w.Calls(), "src.fence") {
+		// Cancel at the fence, or after a deadline so the goroutine ends.
+		for deadline := time.Now().Add(5 * time.Second); !contains(h.w.Calls(), "src.fence") && time.Now().Before(deadline); {
 			time.Sleep(time.Millisecond)
 		}
 		cancel()

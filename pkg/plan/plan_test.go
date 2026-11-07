@@ -227,3 +227,71 @@ func TestExternalSource(t *testing.T) {
 		}
 	}
 }
+
+func TestStateless(t *testing.T) {
+	base := `{"id":"doom","source":%s,"target":%s,
+	  "gateway":{"mode":"http","url":"http://gw:9901"}%s}`
+	src, dst := `{"kind":"none","env":"eks"}`, `{"kind":"none","env":"gke"}`
+	cold := `{"kind":"none","env":"gke","namespace":"doom","app":{"mode":"cold","kind":"Deployment","name":"doom","replicas":1,
+	  "smokeUrl":"http://doom.gke:8080","smoke":[{"method":"GET","path":"/"}]}}`
+
+	p, err := Parse([]byte(fmt.Sprintf(base, src, dst, `,"files":{"source":"s:b","target":"d:b"}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.Stateless() || p.Source.External() {
+		t.Errorf("not stateless: %+v %+v", p.Source, p.Target)
+	}
+	if *p.Verify.FenceGate || len(p.Verify.Schemas) != 0 {
+		t.Errorf("verify defaults must stay empty: %+v", p.Verify)
+	}
+	if p.Gateway.SourceBackend != "eks" || p.Gateway.TargetBackend != "gke" {
+		t.Errorf("gateway backends: %+v", p.Gateway)
+	}
+	for name, c := range map[string][3]string{
+		"cold app in target.namespace": {src, cold, ""},
+		"warm smoke":                   {src, `{"kind":"none","env":"gke","app":{"smokeUrl":"http://doom.gke:8080","smoke":[{"method":"GET","path":"/"}]}}`, ""},
+		"fenceGate false":              {src, dst, `,"verify":{"fenceGate":false}`},
+	} {
+		if _, err := Parse([]byte(fmt.Sprintf(base, c[0], c[1], c[2]))); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+
+	bad := map[string]struct {
+		src, dst, extra, want string
+	}{
+		"none with cnpg target":    {src, `{"env":"gke","namespace":"n","cluster":"c","dsn":"y"}`, "", "must both be"},
+		"cnpg source, none target": {`{"env":"eks","namespace":"n","cluster":"c","dsn":"y"}`, dst, "", "must both be"},
+		"external with none":       {`{"kind":"external","name":"legacy","env":"eks","dsn":"x"}`, dst, "", "must both be"},
+		"source dsn":               {`{"kind":"none","env":"eks","dsn":"x"}`, dst, "", "source.dsn"},
+		"target cluster":           {src, `{"kind":"none","env":"gke","cluster":"c"}`, "", "target.cluster"},
+		"warm target namespace":    {src, `{"kind":"none","env":"gke","namespace":"doom"}`, "", "target.namespace"},
+		"source kubeconfig":        {`{"kind":"none","env":"eks","kubeconfig":"k","context":"c"}`, dst, "", "source.kubeconfig, context"},
+		"manifest":                 {src, `{"kind":"none","env":"gke","manifest":"t.yaml"}`, "", "target.manifest"},
+		"reindex":                  {src, `{"kind":"none","env":"gke","reindex":["public.i"]}`, "", "target.reindex"},
+		"cold without namespace":   {src, strings.Replace(cold, `"namespace":"doom",`, "", 1), "", "target.namespace is required"},
+		"warm write smoke":         {src, `{"kind":"none","env":"gke","app":{"smokeUrl":"http://doom.gke:8080","smoke":[{"method":"POST","path":"/"}]}}`, "", "GET or HEAD"},
+		"warm smoke without url":   {src, `{"kind":"none","env":"gke","app":{"smoke":[{"method":"GET","path":"/"}]}}`, "", "smokeUrl"},
+		"no gateway":               {src, dst, `,"gateway":{"mode":"none"}`, "gateway.mode http"},
+		"fenceGate true":           {src, dst, `,"verify":{"fenceGate":true}`, "fenceGate"},
+		"verify tables":            {src, dst, `,"verify":{"tables":["public.t"]}`, "verify.schemas"},
+		"written records":          {src, dst, `,"verify":{"writtenRecords":"w.jsonl"}`, "verify.schemas"},
+		"source rewire":            {src, dst, `,"allowSourceRewire":true`, "allowSourceRewire"},
+		"decommission":             {src, dst, `,"decommission":{"selector":"app=doom","smokeUrl":"http://gw","smoke":[{"method":"GET","path":"/"}]}`, "decommission"},
+		"warm app kind":            {src, `{"kind":"none","env":"gke","app":{"kind":"Deployment","name":"doom"}}`, "", "only for target.app.mode cold"},
+		"same backends":            {src, dst, `,"gateway":{"mode":"http","url":"http://gw","targetBackend":"eks"}`, "route would not move"},
+		"kind mix message":         {src, `{"env":"gke","namespace":"n","cluster":"c","dsn":"y"}`, "", "(cnpg)"},
+		"same env":                 {src, `{"kind":"none","env":"eks"}`, "", "both"},
+	}
+	for name, c := range bad {
+		js := fmt.Sprintf(base, c.src, c.dst, c.extra)
+		if name == "no gateway" {
+			js = fmt.Sprintf(`{"id":"doom","source":%s,"target":%s%s}`, c.src, c.dst, c.extra)
+		}
+		_, err := Parse([]byte(js))
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err = %v, want %q", name, err, c.want)
+		}
+	}
+}

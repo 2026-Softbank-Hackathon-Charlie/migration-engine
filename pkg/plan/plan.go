@@ -35,9 +35,11 @@ type Plan struct {
 }
 
 // Endpoint is one environment (gke / eks / onprem) holding a CNPG Cluster,
-// or (source only) a PostgreSQL primary outside CNPG (ADR 0019).
+// or (source only) a PostgreSQL primary outside CNPG (ADR 0019), or (both
+// ends together) no database at all (ADR 0020).
 type Endpoint struct {
-	// Kind (source only): "cnpg" (default) or "external".
+	// Kind: "cnpg" (default), "external" (source only) or "none" (both
+	// source and target: the app has no database, ADR 0020).
 	Kind string `json:"kind,omitempty"`
 	// Name (external source only) is the source's name in the target
 	// Cluster's externalClusters, which the target's replica.primary names.
@@ -68,8 +70,15 @@ const (
 	SourceExternal = "external"
 )
 
+// KindNone on both endpoints means the app has no database (ADR 0020).
+const KindNone = "none"
+
 // External reports whether the endpoint is a PostgreSQL primary outside CNPG.
 func (e Endpoint) External() bool { return e.Kind == SourceExternal }
+
+// Stateless reports whether the plan moves an app without a database: only
+// the gateway route and, optionally, files (ADR 0020).
+func (p *Plan) Stateless() bool { return p.Source.Kind == KindNone && p.Target.Kind == KindNone }
 
 // App start modes (ADR 0012).
 const (
@@ -229,7 +238,14 @@ func (p *Plan) applyDefaults() {
 	if p.Gateway.TargetBackend == "" {
 		p.Gateway.TargetBackend = p.Target.Env
 	}
-	if p.Verify.FenceGate == nil {
+	if p.Stateless() {
+		// No database to compare: the verify options stay as written (Validate
+		// rejects them) and the fence gate is off.
+		if p.Verify.FenceGate == nil {
+			f := false
+			p.Verify.FenceGate = &f
+		}
+	} else if p.Verify.FenceGate == nil {
 		t := true
 		p.Verify.FenceGate = &t
 	}
@@ -281,6 +297,9 @@ func (p *Plan) Validate() error {
 			}
 			continue
 		}
+		if e.Kind == KindNone {
+			continue // validateStateless
+		}
 		if e.Namespace == "" {
 			errs = append(errs, fmt.Errorf("%s.namespace is required", role))
 		}
@@ -330,6 +349,9 @@ func (p *Plan) Validate() error {
 
 // validateKinds checks source.kind and what an external source needs (ADR 0019).
 func (p *Plan) validateKinds() []error {
+	if p.Source.Kind == KindNone || p.Target.Kind == KindNone {
+		return p.validateStateless()
+	}
 	var errs []error
 	s := p.Source
 	switch s.Kind {
@@ -370,10 +392,10 @@ func (p *Plan) validateKinds() []error {
 			}
 		}
 	default:
-		errs = append(errs, fmt.Errorf("source.kind must be %q or %q, got %q", SourceCNPG, SourceExternal, s.Kind))
+		errs = append(errs, fmt.Errorf("source.kind must be %q, %q or %q, got %q", SourceCNPG, SourceExternal, KindNone, s.Kind))
 	}
 	if p.Target.Kind != "" && p.Target.Kind != SourceCNPG {
-		errs = append(errs, fmt.Errorf("target.kind must be %q, got %q", SourceCNPG, p.Target.Kind))
+		errs = append(errs, fmt.Errorf("target.kind must be %q or %q, got %q", SourceCNPG, KindNone, p.Target.Kind))
 	}
 	if p.Target.Name != "" {
 		errs = append(errs, errors.New("target.name is not supported (external source only)"))
@@ -382,6 +404,83 @@ func (p *Plan) validateKinds() []error {
 		errs = append(errs, errors.New("source.reindex is not supported (target only)"))
 	}
 	return errs
+}
+
+// validateStateless checks a plan for an app without a database (ADR 0020):
+// both kinds are none, no endpoint names a database, and nothing asks for a
+// database comparison. Only a cold target app may say where it runs.
+func (p *Plan) validateStateless() []error {
+	var errs []error
+	if !p.Stateless() {
+		return []error{fmt.Errorf("source.kind and target.kind must both be %q for an app without a database (got %s and %s)", KindNone, kindName(p.Source.Kind), kindName(p.Target.Kind))}
+	}
+	cold := p.Target.App.Cold()
+	for role, e := range map[string]Endpoint{"source": p.Source, "target": p.Target} {
+		var set []string
+		for _, f := range []struct{ name, val string }{
+			{"name", e.Name}, {"cluster", e.Cluster}, {"dsn", e.DSN}, {"manifest", e.Manifest},
+		} {
+			if f.val != "" {
+				set = append(set, f.name)
+			}
+		}
+		if len(e.Reindex) > 0 {
+			set = append(set, "reindex")
+		}
+		// A cold target app is a workload in target.namespace (ADR 0012).
+		if role == "source" || !cold {
+			for _, f := range []struct{ name, val string }{
+				{"namespace", e.Namespace}, {"kubeconfig", e.Kubeconfig}, {"context", e.Context},
+			} {
+				if f.val != "" {
+					set = append(set, f.name)
+				}
+			}
+		}
+		if len(set) > 0 {
+			errs = append(errs, fmt.Errorf("%s.%s not used by kind %q (only env; target.namespace, kubeconfig and context only with target.app.mode cold)", role, strings.Join(set, ", "), KindNone))
+		}
+	}
+	if cold && p.Target.Namespace == "" {
+		errs = append(errs, errors.New("target.namespace is required with target.app.mode cold (where the target app runs)"))
+	}
+	if a := p.Target.App; a != nil && !cold {
+		if a.Kind != "" || a.Name != "" || a.Replicas != 0 {
+			errs = append(errs, errors.New("target.app.kind, name and replicas are only for target.app.mode cold (a warm app is not scaled)"))
+		}
+		if a.SmokeURL != "" || len(a.Smoke) > 0 {
+			errs = append(errs, a.validateSmoke()...)
+		}
+	}
+	if p.Gateway.SourceBackend == p.Gateway.TargetBackend {
+		errs = append(errs, fmt.Errorf("gateway.sourceBackend and targetBackend are both %q: the route would not move", p.Gateway.SourceBackend))
+	}
+	if p.Gateway.Mode != "http" {
+		// Moving the gateway route is the whole migration.
+		errs = append(errs, fmt.Errorf("kind %q requires gateway.mode http", KindNone))
+	}
+	v := p.Verify
+	if len(v.Schemas) > 0 || len(v.Tables) > 0 || v.WrittenRecords != "" {
+		errs = append(errs, fmt.Errorf("verify.schemas, tables and writtenRecords are not used by kind %q (no database)", KindNone))
+	}
+	if v.FenceGate != nil && *v.FenceGate {
+		errs = append(errs, fmt.Errorf("verify.fenceGate must be false or omitted for kind %q (no database to compare)", KindNone))
+	}
+	if p.AllowSourceRewire {
+		errs = append(errs, fmt.Errorf("allowSourceRewire is not supported for kind %q (no database topology)", KindNone))
+	}
+	if p.Decommission != nil {
+		errs = append(errs, fmt.Errorf("decommission is not supported for kind %q yet (it retires a source database)", KindNone))
+	}
+	return errs
+}
+
+// kindName shows an endpoint kind, the empty default as cnpg.
+func kindName(k string) string {
+	if k == "" {
+		return `"" (cnpg)`
+	}
+	return fmt.Sprintf("%q", k)
 }
 
 func (a *AppSpec) validate(p *Plan) []error {
@@ -410,6 +509,12 @@ func (a *AppSpec) validate(p *Plan) []error {
 	if a.StartTimeout.Duration < 0 || a.StartTimeout.Duration > 30*time.Minute {
 		errs = append(errs, errors.New("target.app.startTimeout must be between 0 and 30m"))
 	}
+	return append(errs, a.validateSmoke()...)
+}
+
+// validateSmoke checks target.app.smokeUrl and target.app.smoke.
+func (a *AppSpec) validateSmoke() []error {
+	var errs []error
 	if u, err := url.Parse(a.SmokeURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		errs = append(errs, errors.New("target.app.smokeUrl must be an http(s) URL of the target app"))
 	}

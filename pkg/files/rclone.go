@@ -57,6 +57,29 @@ func (r *Rclone) Sync(ctx context.Context, src, dst string) (SyncResult, error) 
 	return res, nil
 }
 
+// Copy copies new and changed objects from src to dst and never deletes
+// from dst (stateless plans, ADR 0020).
+func (r *Rclone) Copy(ctx context.Context, src, dst string) (SyncResult, error) {
+	args := append([]string{"copy", src, dst, "--stats-one-line", "--stats-log-level", "NOTICE", "--stats", "0"}, r.Flags...)
+	start := time.Now()
+	out, err := r.run(ctx, args)
+	res := SyncResult{Duration: time.Since(start), Output: tail(out, 2000)}
+	if err != nil {
+		return res, fmt.Errorf("rclone copy %s -> %s: %w: %s", src, dst, err, tail(out, 500))
+	}
+	return res, nil
+}
+
+// Readable lists the top level of remote (rclone lsf --max-depth 1), a cheap
+// check that it exists and the credentials can read it.
+func (r *Rclone) Readable(ctx context.Context, remote string) error {
+	args := append([]string{"lsf", remote, "--max-depth", "1"}, r.Flags...)
+	if out, err := r.run(ctx, args); err != nil {
+		return fmt.Errorf("rclone lsf %s: %w: %s", remote, err, tail(out, 500))
+	}
+	return nil
+}
+
 // CheckResult is evidence from `rclone check --one-way`.
 type CheckResult struct {
 	OK          bool   `json:"ok"`

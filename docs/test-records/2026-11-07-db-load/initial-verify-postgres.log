@@ -1,0 +1,45 @@
+go: downloading golang.org/x/text v0.41.0
+go: downloading golang.org/x/sync v0.22.0
+=== RUN   TestQueries
+--- PASS: TestQueries (0.00s)
+=== RUN   TestReadWritten
+--- PASS: TestReadWritten (0.00s)
+=== RUN   TestReadWrittenFinalState
+=== RUN   TestReadWrittenFinalState/{"table":"orders","pk":"1"}
+=== RUN   TestReadWrittenFinalState/{"table":"orders","pk":"1","expected":{"id":1,"total":2}}
+=== RUN   TestReadWrittenFinalState/{"table":"orders","pk":"1","absent":true}
+=== RUN   TestReadWrittenFinalState/{"table":"orders","pk":"1","absent":true,"expected":{}}
+=== RUN   TestReadWrittenFinalState/{"table":"orders","pk":"1","expected":[]}
+=== RUN   TestReadWrittenFinalState/{"table":"orders","pk":"1","expected":null}
+--- PASS: TestReadWrittenFinalState (0.01s)
+    --- PASS: TestReadWrittenFinalState/{"table":"orders","pk":"1"} (0.00s)
+    --- PASS: TestReadWrittenFinalState/{"table":"orders","pk":"1","expected":{"id":1,"total":2}} (0.00s)
+    --- PASS: TestReadWrittenFinalState/{"table":"orders","pk":"1","absent":true} (0.00s)
+    --- PASS: TestReadWrittenFinalState/{"table":"orders","pk":"1","absent":true,"expected":{}} (0.00s)
+    --- PASS: TestReadWrittenFinalState/{"table":"orders","pk":"1","expected":[]} (0.00s)
+    --- PASS: TestReadWrittenFinalState/{"table":"orders","pk":"1","expected":null} (0.00s)
+=== RUN   TestListTablesFindsPrimaryKeys
+--- PASS: TestListTablesFindsPrimaryKeys (0.37s)
+=== RUN   TestCompareTablesMatchesIdenticalData
+--- PASS: TestCompareTablesMatchesIdenticalData (0.37s)
+=== RUN   TestCompareTablesDetectsDifferences
+=== RUN   TestCompareTablesDetectsDifferences/changed_value
+=== RUN   TestCompareTablesDetectsDifferences/missing_row
+=== RUN   TestCompareTablesDetectsDifferences/extra_row
+=== RUN   TestCompareTablesDetectsDifferences/table_without_PK
+--- PASS: TestCompareTablesDetectsDifferences (1.31s)
+    --- PASS: TestCompareTablesDetectsDifferences/changed_value (0.31s)
+    --- PASS: TestCompareTablesDetectsDifferences/missing_row (0.33s)
+    --- PASS: TestCompareTablesDetectsDifferences/extra_row (0.34s)
+    --- PASS: TestCompareTablesDetectsDifferences/table_without_PK (0.32s)
+=== RUN   TestMissingRows
+--- PASS: TestMissingRows (0.43s)
+=== RUN   TestCheckWritten
+--- PASS: TestCheckWritten (0.34s)
+=== RUN   TestMissingRowsWithSourceFollowingTarget
+    verify_integration_test.go:205: run test/integration/run.sh
+--- SKIP: TestMissingRowsWithSourceFollowingTarget (0.00s)
+=== RUN   TestAcknowledgedUpdateDeleteAndTransactionFinalState
+--- PASS: TestAcknowledgedUpdateDeleteAndTransactionFinalState (0.33s)
+PASS
+ok  	github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/verify	3.158s

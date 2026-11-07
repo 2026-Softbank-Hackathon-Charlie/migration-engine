@@ -1,0 +1,16 @@
+?   	github.com/2026-Softbank-Hackathon-Charlie/migration-engine/cmd/hopmigrate	[no test files]
+?   	github.com/2026-Softbank-Hackathon-Charlie/migration-engine/docs/test-records/2026-11-05-eks-gke-hello-rehearsal	[no test files]
+?   	github.com/2026-Softbank-Hackathon-Charlie/migration-engine/docs/test-records/2026-11-05-eks-hello-rehearsal	[no test files]
+ok  	github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/cnpg	1.141s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/decommission	1.627s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/engine	43.601s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/envcheck	1.056s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/files	1.013s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/gateway	1.076s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/kube	1.051s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/loadguard	3.072s
+?   	github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/pg	[no test files]
+ok  	github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/plan	1.016s
+ok  	github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/verify	1.021s
+?   	github.com/2026-Softbank-Hackathon-Charlie/migration-engine/test/gateway-rehearsal/hello	[no test files]
+?   	github.com/2026-Softbank-Hackathon-Charlie/migration-engine/test/gateway-rehearsal/load	[no test files]

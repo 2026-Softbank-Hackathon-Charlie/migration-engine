@@ -112,8 +112,9 @@ func connectPG(ctx context.Context, dsn string) (Database, error) {
 
 // sqlVerifier is the production Verifier; it needs *pg.DB connections.
 type sqlVerifier struct {
-	plan *plan.Plan
-	rc   FileSyncer
+	plan    *plan.Plan
+	rc      FileSyncer
+	options verify.ScanOptions
 }
 
 func pools(src, dst Database) (*pg.DB, *pg.DB, error) {
@@ -126,6 +127,11 @@ func pools(src, dst Database) (*pg.DB, *pg.DB, error) {
 }
 
 func (v sqlVerifier) FenceGate(ctx context.Context, src, dst Database) ([]verify.TableResult, bool, error) {
+	if v.options.QueryTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, v.options.QueryTimeout)
+		defer cancel()
+	}
 	s, d, err := pools(src, dst)
 	if err != nil {
 		return nil, false, err
@@ -143,7 +149,7 @@ func (v sqlVerifier) Report(ctx context.Context, src, dst Database) (*Report, er
 	if err != nil {
 		return nil, err
 	}
-	return Verify(ctx, v.plan, s, d, v.rc)
+	return verifyWithOptions(ctx, v.plan, s, d, v.rc, v.options)
 }
 
 // measureLag measures how far target is behind source in bytes.

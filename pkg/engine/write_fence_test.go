@@ -139,7 +139,7 @@ func TestSourceSQLFenceBeforePromotionFailureRestoresBeforeRelease(t *testing.T)
 }
 
 func TestSourceSQLFenceNeverReopensAfterObserverLossOrUnknownDemotion(t *testing.T) {
-	for _, fault := range []string{"observer", "demotion", "promotion"} {
+	for _, fault := range []string{"observer", "demote-request", "demotion", "promotion"} {
 		t.Run(fault, func(t *testing.T) {
 			h, e, f := fencedHarness(t)
 			switch fault {
@@ -148,6 +148,8 @@ func TestSourceSQLFenceNeverReopensAfterObserverLossOrUnknownDemotion(t *testing
 				f.observerErr = errors.New("old verifier lost")
 			case "demotion":
 				h.w.noDemotionToken = true
+			case "demote-request":
+				h.w.src.setErr = errors.New("source demotion request timed out before a conclusive acknowledgment")
 			case "promotion":
 				h.w.dst.setErr = errors.New("promote timeout")
 			}

@@ -355,7 +355,7 @@ func (e *Engine) switchover(ctx context.Context) (map[string]any, error) {
 		// may still have been applied. When the source still names itself as
 		// primary the request was not applied and CNPG never started demoting:
 		// the rollback can release writes on it without waiting for a token.
-		if s, gerr := e.src.Get(ctx); gerr == nil && s.IsPrimary() && s.DemotionToken == e.tokenBeforeDemote {
+		if s, gerr := e.src.Get(ctx); e.plan.SourceWriteFence == nil && gerr == nil && s.IsPrimary() && s.DemotionToken == e.tokenBeforeDemote {
 			e.setFlags(func(s *State) { s.SourceDemoted = false })
 			ev["demotionApplied"] = false
 		}

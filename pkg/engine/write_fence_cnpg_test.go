@@ -142,9 +142,9 @@ func TestSourceWriteFenceCNPGShutdownCheckpoint(t *testing.T) {
 			if e != nil {
 				t.Fatalf("new target reader blocked by source fence: %v", e)
 			}
-			var n int
-			if e = reader.QueryRow(ctx, `SELECT count(*) FROM orders`).Scan(&n); e != nil || n != 20000 {
-				t.Fatalf("target read n=%d err=%v", n, e)
+			var n, uncommitted int
+			if e = reader.QueryRow(ctx, `SELECT count(*),count(*) FILTER (WHERE note='fence-open-transaction') FROM orders`).Scan(&n, &uncommitted); e != nil || n < 20000 || n > 20001 || uncommitted != 0 {
+				t.Fatalf("target read n=%d uncommitted=%d err=%v", n, uncommitted, e)
 			}
 			_ = reader.Close(ctx)
 		}

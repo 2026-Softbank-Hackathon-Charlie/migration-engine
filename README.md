@@ -95,3 +95,9 @@ bin/hopmigrate step     -plan ... -run <RUN_ID> -step fence   # 한 단계씩 �
 - `test/rehearsal/run.sh`: kind에 CNPG 클러스터 두 개를 띄워 실제 엔진으로 왕복 이전과 원복 리허설 (kind, kubectl 필요)
 
 각 단계의 세부 동작, 다른 팀과의 약속(CNPG 설정, 게이트웨이 API, k6 기록 형식), 알려진 한계는 [docs/details.md](docs/details.md)에 있습니다. 왜 이렇게 만들었는지는 [docs/adr](docs/adr)에 있습니다.
+
+## CI와 main 머지 조건
+
+모든 PR은 `ci` workflow의 `go`(전체 race·vet·build·PostgreSQL 통합)와 `cnpg-write-fence`(실제 kind CNPG fence·admission)를 통과해야 합니다. main은 최신 변경과 동기화한 PR만 받으며 관리자에게도 같은 조건을 적용합니다. main force push·삭제와 PR bypass는 허용하지 않습니다.
+
+실제 적용 설정과 확인 명령은 [ADR 0023](docs/adr/0023-require-existing-ci-before-main-merge.md), 정확한 설정 요청은 [main.json](.github/branch-protection/main.json)에 기록했습니다. 파일을 바꾸는 것만으로 GitHub 설정이 자동 변경되지는 않습니다.

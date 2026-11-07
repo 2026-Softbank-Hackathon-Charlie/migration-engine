@@ -97,6 +97,9 @@ func (f *sourceHBAFence) Precheck(ctx context.Context, lease string) (cnpg.HBASn
 	if err = (&pg.WriterFence{DB: f.targetDB}).VerifySystemIdentifier(ctx, snapshot.SystemIdentifier); err != nil {
 		return snapshot, fmt.Errorf("target SQL identity: %w", err)
 	}
+	if recovery, err := f.targetDB.InRecovery(ctx); err != nil || !recovery {
+		return snapshot, errors.New("warm target is not confirmed read-only by SQL before source fencing")
+	}
 	if err = f.cluster.DryRunWriteFence(ctx, snapshot, lease, f.roles); err != nil {
 		return snapshot, fmt.Errorf("source write fence admission capability: %w", err)
 	}

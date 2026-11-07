@@ -45,18 +45,19 @@ type State struct {
 	Steps     map[string]*StepRecord `json:"steps"`
 
 	// Safety flags that decide what a failure is allowed to undo.
-	WritesHeld       bool       `json:"writesHeld"`
-	WritesHeldAt     *time.Time `json:"writesHeldAt,omitempty"`
-	FenceLSN         string     `json:"fenceLsn,omitempty"`
-	SourceDemoted    bool       `json:"sourceDemoted"`
-	PromoteRequested bool       `json:"promoteRequested"` // point of no auto-rollback
-	TrafficOnTarget  bool       `json:"trafficOnTarget"`
-	DowntimeMillis   int64      `json:"downtimeMillis,omitempty"`
-	FailureStep      string     `json:"failureStep,omitempty"`
-	FailureError     string     `json:"failureError,omitempty"`
-	RollbackError    string     `json:"rollbackError,omitempty"`
-	SourceFenced     bool       `json:"sourceFenced,omitempty"` // external source asked to refuse writes (ADR 0019)
-	FenceXid         string     `json:"fenceXid,omitempty"`     // external source's next xid at the fence
+	WritesHeld       bool                   `json:"writesHeld"`
+	WritesHeldAt     *time.Time             `json:"writesHeldAt,omitempty"`
+	FenceLSN         string                 `json:"fenceLsn,omitempty"`
+	SourceDemoted    bool                   `json:"sourceDemoted"`
+	PromoteRequested bool                   `json:"promoteRequested"` // point of no auto-rollback
+	TrafficOnTarget  bool                   `json:"trafficOnTarget"`
+	DowntimeMillis   int64                  `json:"downtimeMillis,omitempty"`
+	FailureStep      string                 `json:"failureStep,omitempty"`
+	FailureError     string                 `json:"failureError,omitempty"`
+	RollbackError    string                 `json:"rollbackError,omitempty"`
+	SourceFenced     bool                   `json:"sourceFenced,omitempty"` // external source asked to refuse writes (ADR 0019)
+	FenceXid         string                 `json:"fenceXid,omitempty"`     // external source's next xid at the fence
+	SourceWriteFence *SourceWriteFenceState `json:"sourceWriteFence,omitempty"`
 }
 
 func newState(runID, planID string) *State {

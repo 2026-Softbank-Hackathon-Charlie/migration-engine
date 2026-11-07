@@ -1,0 +1,167 @@
+//go:build integration && writefence
+
+package pg
+
+import (
+	"context"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+)
+
+// This changes only the disposable compose primary's pg_hba.conf. The explicit
+// fixture flag and endpoint guard prevent running it as a generic DB probe.
+func TestSourceHBAWriteFence(t *testing.T) {
+	if os.Getenv("HOPCHARLIE_IT_HBA_FIXTURE") != "disposable-compose" {
+		t.Skip("disposable HBA fixture not enabled")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	srcConfig, err := pgx.ParseConfig(os.Getenv("HOPCHARLIE_IT_PRIMARY_DSN"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if srcConfig.Host != "127.0.0.1" || srcConfig.Port != 55432 || srcConfig.Database != "shop" || srcConfig.User != "postgres" {
+		t.Fatal("refusing HBA fixture outside the disposable integration endpoint")
+	}
+	maintenance := srcConfig.Copy()
+	maintenance.Database = "postgres"
+	control, err := pgx.ConnectConfig(ctx, maintenance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer control.Close(context.Background())
+	var original, path string
+	if err = control.QueryRow(ctx, `SELECT current_setting('hba_file'),pg_read_file(current_setting('hba_file'))`).Scan(&path, &original); err != nil {
+		t.Fatal(err)
+	}
+	writeHBA := func(text string) {
+		t.Helper()
+		// The fixture has no backslash-containing authentication options. COPY
+		// text preserves its plain host/scram rules and comments.
+		quoted := "'" + strings.ReplaceAll(text, "'", "''") + "'"
+		file := "'" + strings.ReplaceAll(path, "'", "''") + "'"
+		if _, e := control.Exec(ctx, `COPY (SELECT unnest(string_to_array(`+quoted+`,E'\n'))) TO `+file); e != nil {
+			t.Fatal(e)
+		}
+		if _, e := control.Exec(ctx, `SELECT pg_reload_conf()`); e != nil {
+			t.Fatal(e)
+		}
+	}
+	t.Cleanup(func() {
+		cleanup, stop := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stop()
+		cleanupControl, e := pgx.ConnectConfig(cleanup, maintenance)
+		if e != nil {
+			return
+		}
+		defer cleanupControl.Close(cleanup)
+		quoted := "'" + strings.ReplaceAll(original, "'", "''") + "'"
+		file := "'" + strings.ReplaceAll(path, "'", "''") + "'"
+		_, _ = cleanupControl.Exec(cleanup, `COPY (SELECT unnest(string_to_array(`+quoted+`,E'\n'))) TO `+file)
+		_, _ = cleanupControl.Exec(cleanup, `SELECT pg_reload_conf()`)
+		cfg := srcConfig.Copy()
+		admin, e := pgx.ConnectConfig(cleanup, cfg)
+		if e == nil {
+			_, _ = admin.Exec(cleanup, `DROP TABLE IF EXISTS public.fence_probe; DROP OWNED BY hop_fence_observer,hop_fence_writer; DROP ROLE IF EXISTS hop_fence_observer,hop_fence_writer`)
+			_ = admin.Close(cleanup)
+		}
+	})
+	_, err = control.Exec(ctx, `CREATE ROLE hop_fence_writer LOGIN PASSWORD 'fixture-only'; CREATE ROLE hop_fence_observer LOGIN PASSWORD 'fixture-only'; GRANT pg_read_all_stats,pg_signal_backend TO hop_fence_observer`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin, err := pgx.ConnectConfig(ctx, srcConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = admin.Exec(ctx, `CREATE TABLE public.fence_probe(id integer PRIMARY KEY); GRANT SELECT ON public.fence_probe TO hop_fence_observer,hop_fence_writer; GRANT INSERT ON public.fence_probe TO hop_fence_writer`)
+	_ = admin.Close(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observerConfig := srcConfig.Copy()
+	observerConfig.User, observerConfig.Password = "hop_fence_observer", "fixture-only"
+	observer, err := Connect(ctx, observerConfig.ConnString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer observer.Close()
+	fence := &WriterFence{DB: observer, DSN: observerConfig.ConnString(), Roles: []string{"hop_fence_writer"}}
+	if err = fence.Precheck(ctx); err != nil {
+		t.Fatal(err)
+	}
+	writerConfig := srcConfig.Copy()
+	writerConfig.User, writerConfig.Password = "hop_fence_writer", "fixture-only"
+	writer, err := pgx.ConnectConfig(ctx, writerConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close(context.Background())
+	tx, err := writer.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO public.fence_probe VALUES(1)`); err != nil {
+		t.Fatal(err)
+	}
+	if err = fence.Rejected(ctx); err == nil {
+		t.Fatal("a password rejection was mistaken for an HBA fence")
+	}
+	writeHBA("host all hop_fence_writer 0.0.0.0/0 reject\nhost all hop_fence_writer ::/0 reject\n" + original)
+	for fence.Rejected(ctx) != nil {
+		select {
+		case <-ctx.Done():
+			t.Fatal("HBA deny never became active")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	n, err := fence.Drain(ctx)
+	if err != nil || n != 1 {
+		t.Fatalf("drain=%d err=%v", n, err)
+	}
+	if err = tx.Commit(ctx); err == nil {
+		t.Fatal("an existing direct writer committed through the fence")
+	}
+	var count int
+	if err = observer.Pool.QueryRow(ctx, `SELECT count(*) FROM public.fence_probe`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("old transaction survived: count=%d err=%v", count, err)
+	}
+	// Source-local HBA is not WAL-replicated: a new target reader using the
+	// same writer LOGIN must remain able to connect and read during the fence.
+	targetConfig, err := pgx.ParseConfig(os.Getenv("HOPCHARLIE_IT_STANDBY_DSN"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetConfig.User, targetConfig.Password = "hop_fence_writer", "fixture-only"
+	var target *pgx.Conn
+	for {
+		target, err = pgx.ConnectConfig(ctx, targetConfig)
+		if err == nil {
+			if err = target.QueryRow(ctx, `SELECT count(*) FROM public.fence_probe`).Scan(&count); err == nil {
+				break
+			}
+			_ = target.Close(ctx)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("target reader unavailable during source fence: %v", err)
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	_ = target.Close(ctx)
+	if err = fence.AssertDrained(ctx); err != nil {
+		t.Fatal(err)
+	}
+	writeHBA(original)
+	for fence.Admitted(ctx) != nil {
+		select {
+		case <-ctx.Done():
+			t.Fatal("original HBA never restored")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}

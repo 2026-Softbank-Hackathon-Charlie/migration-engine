@@ -95,7 +95,8 @@ type Options struct {
 	// External replaces the adapter of a source.kind external plan (ADR 0019).
 	External ExternalSource
 	// PollInterval is the base polling period (default 2s). Shorter waits scale from it.
-	PollInterval time.Duration
+	PollInterval      time.Duration
+	SourceWriteFencer SourceWriteFencer
 }
 
 // Engine runs one migration.
@@ -117,6 +118,7 @@ type Engine struct {
 	app          App // nil unless the plan is cold
 	prober       Prober
 	poll         time.Duration
+	writeFencer  SourceWriteFencer
 
 	// tokenBeforeDemote is the source demotion token seen just before this run
 	// demoted it. CNPG may keep an old token in status, so a demotion counts as
@@ -130,6 +132,15 @@ func New(p *plan.Plan, opt Options) (*Engine, error) {
 		opt.StateDir = filepath.Join(".hopcharlie", "runs")
 	}
 	e := &Engine{plan: p, emitFn: opt.Emit, connect: opt.Connect, poll: opt.PollInterval}
+	e.writeFencer = opt.SourceWriteFencer
+	if f := p.SourceWriteFence; f != nil {
+		if err := f.Validate(); err != nil {
+			return nil, err
+		}
+		if p.Gateway.Mode != "http" || p.Target.App.Cold() {
+			return nil, errors.New("sourceWriteFence requires an HTTP gateway and a warm target")
+		}
+	}
 	if err := e.configureLoad(p); err != nil {
 		return nil, err
 	}
@@ -244,6 +255,11 @@ func (e *Engine) State() State {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	s := *e.state
+	if s.SourceWriteFence != nil {
+		proof := *s.SourceWriteFence
+		proof.WriterRoles = slices.Clone(proof.WriterRoles)
+		s.SourceWriteFence = &proof
+	}
 	s.Steps = make(map[string]*StepRecord, len(e.state.Steps))
 	for name, rec := range e.state.Steps {
 		if rec == nil {
@@ -324,6 +340,9 @@ func (e *Engine) RunStep(ctx context.Context, name string) error {
 // Any doubt keeps the run halted with the reason.
 func (e *Engine) ResumeHalted(ctx context.Context) error {
 	st := e.State()
+	if f := st.SourceWriteFence; f != nil && f.Intent && !f.Released {
+		return errors.New("source-local SQL fence remains owned by this run; reconcile it explicitly before resume")
+	}
 	if st.Outcome != OutcomeHalted {
 		return fmt.Errorf("run %s is %s, not halted", st.RunID, st.Outcome)
 	}
@@ -392,6 +411,15 @@ func (e *Engine) markResumed(st State, ev map[string]any, msg string) {
 }
 
 func (e *Engine) checkRunnable() error {
+	if f := e.state.SourceWriteFence; f != nil && f.Intent && !f.Released && e.writeFencer == nil {
+		e.mu.Lock()
+		e.state.Outcome = OutcomeHalted
+		e.state.FailureStep = StepFence
+		e.state.FailureError = "source write fence survived a process restart; operator reconciliation required"
+		e.mu.Unlock()
+		e.save()
+		return errors.New(e.state.FailureError)
+	}
 	// A process may die after an external request was applied but before its
 	// result was saved. Never replay an interrupted step across the fence.
 	if e.state.Outcome == OutcomeRunning {
@@ -521,6 +549,22 @@ func (e *Engine) onFailure(step string, cause error) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
+	if f := e.state.SourceWriteFence; f != nil && f.Intent && !f.Released && !e.state.PromoteRequested {
+		if e.writeFencer == nil || e.state.SourceDemoted {
+			e.mu.Lock()
+			e.state.Outcome = OutcomeHalted
+			e.mu.Unlock()
+			e.save()
+			return fmt.Errorf("halted with source SQL fence after uncertain connection or demotion: %w", cause)
+		}
+		if err := e.writeFencer.ObserverAlive(ctx); err != nil {
+			e.mu.Lock()
+			e.state.Outcome = OutcomeHalted
+			e.mu.Unlock()
+			e.save()
+			return fmt.Errorf("halted without reopening source admission: %w", err)
+		}
+	}
 
 	switch {
 	case e.canRevertPromotion(step):
@@ -638,6 +682,9 @@ func (e *Engine) rollback(ctx context.Context) error {
 		e.save()
 	}
 	if e.state.WritesHeld {
+		if err := e.restoreSourceWriteFence(ctx, true); err != nil {
+			return fmt.Errorf("restore source SQL write fence: %w", err)
+		}
 		if err := e.gw.Route(ctx, e.plan.Gateway.SourceBackend); err != nil {
 			return err
 		}
@@ -660,7 +707,7 @@ func (e *Engine) rollback(ctx context.Context) error {
 // every user write and routes to the source, so no user write reached the
 // target. Anything less certain halts as before.
 func (e *Engine) canRevertPromotion(step string) bool {
-	return step == StepStartTarget && e.plan.Target.App.Cold() &&
+	return e.plan.SourceWriteFence == nil && step == StepStartTarget && e.plan.Target.App.Cold() &&
 		e.state.PromoteRequested && e.state.SourceDemoted && e.state.WritesHeld && !e.state.TrafficOnTarget
 }
 

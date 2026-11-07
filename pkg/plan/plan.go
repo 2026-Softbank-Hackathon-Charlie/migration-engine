@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -29,9 +30,17 @@ type Plan struct {
 	// It never reparents the target or changes either cluster's primary role.
 	// Omitted/false preserves the strict prewired two-cluster topology.
 	AllowSourceRewire bool `json:"allowSourceRewire,omitempty"`
+	// SourceWriteFence opts into source-local writer admission and session termination.
+	SourceWriteFence *SourceWriteFenceSpec `json:"sourceWriteFence,omitempty"`
 	// Decommission configures the clean-up of the source after a successful
 	// migration (hopmigrate decommission). Optional.
 	Decommission *DecommissionSpec `json:"decommission,omitempty"`
+}
+
+type SourceWriteFenceSpec struct {
+	Mode        string   `json:"mode"` // cnpg_hba; other database providers fail closed
+	WriterRoles []string `json:"writerRoles"`
+	Timeout     Duration `json:"timeout,omitempty"` // default 10s, maximum 30s
 }
 
 // Endpoint is one environment (gke / eks / onprem) holding a CNPG Cluster,
@@ -229,6 +238,9 @@ func (p *Plan) expand() {
 }
 
 func (p *Plan) applyDefaults() {
+	if f := p.SourceWriteFence; f != nil && f.Timeout.Duration == 0 {
+		f.Timeout.Duration = 10 * time.Second
+	}
 	if p.Gateway.Mode == "" {
 		p.Gateway.Mode = "none"
 	}
@@ -342,6 +354,18 @@ func (p *Plan) Validate() error {
 	}
 	if a := p.Target.App; a != nil {
 		errs = append(errs, a.validate(p)...)
+	}
+	if f := p.SourceWriteFence; f != nil {
+		errs = append(errs, f.Validate())
+		if p.Source.Kind != "" && p.Source.Kind != SourceCNPG || p.Target.Kind != "" && p.Target.Kind != SourceCNPG {
+			errs = append(errs, errors.New("sourceWriteFence only supports CNPG endpoints with a database"))
+		}
+		if p.Gateway.Mode != "http" {
+			errs = append(errs, errors.New("sourceWriteFence requires an observable HTTP gateway"))
+		}
+		if p.Target.App.Cold() {
+			errs = append(errs, errors.New("sourceWriteFence requires a warm target for read routing"))
+		}
 	}
 	errs = append(errs, p.validateKinds()...)
 	return errors.Join(errs...)
@@ -481,6 +505,27 @@ func kindName(k string) string {
 		return `"" (cnpg)`
 	}
 	return fmt.Sprintf("%q", k)
+}
+
+func (f SourceWriteFenceSpec) Validate() error {
+	if f.Mode != "cnpg_hba" {
+		return errors.New("sourceWriteFence.mode must be cnpg_hba")
+	}
+	if f.Timeout.Duration <= 0 || f.Timeout.Duration > 30*time.Second {
+		return errors.New("sourceWriteFence.timeout must be positive and at most 30s")
+	}
+	if len(f.WriterRoles) == 0 || len(f.WriterRoles) > 16 {
+		return errors.New("sourceWriteFence.writerRoles requires 1 to 16 ordinary LOGIN roles")
+	}
+	valid := regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
+	seen := map[string]bool{}
+	for _, role := range f.WriterRoles {
+		if !valid.MatchString(role) || strings.HasPrefix(role, "pg_") || role == "postgres" || role == "streaming_replica" || role == "cnpg_pooler_pgbouncer" || seen[role] {
+			return errors.New("sourceWriteFence.writerRoles contains a reserved, invalid, or repeated role")
+		}
+		seen[role] = true
+	}
+	return nil
 }
 
 func (a *AppSpec) validate(p *Plan) []error {

@@ -91,6 +91,37 @@ func (h *HTTP) Totals(ctx context.Context) (map[string]Totals, error) {
 // Totals is not available without a gateway.
 func (None) Totals(context.Context) (map[string]Totals, error) { return nil, ErrNotMeasured }
 
+// SourceFenceReady proves old reads have drained before source DB sessions are
+// terminated. Missing fields from an older gateway are unknown, never zero.
+func (h *HTTP) SourceFenceReady(ctx context.Context, source, target string) (bool, error) {
+	var state struct {
+		WriteBackend *string        `json:"writeBackend"`
+		ReadWeights  map[string]int `json:"readWeights"`
+		WritesHeld   *bool          `json:"writesHeld"`
+		InFlight     *struct {
+			Reads *int `json:"reads"`
+		} `json:"inFlight"`
+	}
+	if err := h.call(ctx, http.MethodGet, "/v1/state", nil, &state); err != nil {
+		return false, err
+	}
+	if state.WriteBackend == nil || state.WritesHeld == nil || state.InFlight == nil || state.InFlight.Reads == nil || state.ReadWeights == nil {
+		return false, errors.New("gateway does not report the read-drain proof required for SQL fencing")
+	}
+	if !*state.WritesHeld || *state.WriteBackend != source {
+		return false, errors.New("gateway source write route or hold changed before SQL fencing")
+	}
+	if state.ReadWeights[target] != 100 || *state.InFlight.Reads != 0 {
+		return false, nil
+	}
+	for backend, weight := range state.ReadWeights {
+		if backend != target && weight != 0 {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 func (h *HTTP) do(ctx context.Context, method, path string, body any) error {
 	return h.call(ctx, method, path, body, nil)
 }

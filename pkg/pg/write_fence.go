@@ -181,7 +181,10 @@ func (f *WriterFence) Precheck(ctx context.Context) error {
 		return err
 	}
 	cfg := f.DB.Pool.Config()
-	cfg.MaxConns, cfg.MinConns = 1, 1
+	// Keep the original connection, but never create a background replacement
+	// after it dies. ObserverAlive must not reconnect to manufacture evidence.
+	cfg.MaxConns, cfg.MinConns = 1, 0
+	cfg.HealthCheckPeriod = 24 * time.Hour
 	cfg.MaxConnLifetime, cfg.MaxConnIdleTime = 0, 24*time.Hour
 	p, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
@@ -206,11 +209,18 @@ func (f *WriterFence) Precheck(ctx context.Context) error {
 }
 
 func (f *WriterFence) Pinned(ctx context.Context) error {
-	conn, err := f.DB.Pool.Acquire(ctx)
-	if err != nil {
-		return errors.New("write fence verifier connection was lost; leave fence and held writes for operator reconciliation")
+	// AcquireAllIdle does not dial or replace a missing connection. A normal
+	// Acquire could authenticate a replacement before noticing the lost owner.
+	idle := f.DB.Pool.AcquireAllIdle(ctx)
+	defer func() {
+		for _, conn := range idle {
+			conn.Release()
+		}
+	}()
+	if len(idle) != 1 {
+		return errors.New("write fence verifier is unavailable; leave fence and held writes for operator reconciliation")
 	}
-	defer conn.Release()
+	conn := idle[0]
 	var pid int32
 	if conn.Conn() != f.observerConn {
 		return errors.New("write fence verifier connection was replaced; leave fence and held writes for operator reconciliation")

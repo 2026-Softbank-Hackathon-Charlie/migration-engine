@@ -76,6 +76,16 @@ func (d *DB) PendingRestart(ctx context.Context) (bool, error) {
 	return b, err
 }
 
+// SettleStatus reads the three promotion-stability signals in one SQL statement.
+// The engine still opens and closes a fresh connection for each observation so
+// these probes cannot keep CNPG's smart shutdown waiting on an idle client.
+func (d *DB) SettleStatus(ctx context.Context) (inRecovery, pendingRestart bool, postmasterStart time.Time, err error) {
+	err = d.Pool.QueryRow(ctx, `SELECT pg_is_in_recovery(),
+		EXISTS (SELECT 1 FROM pg_settings WHERE pending_restart),
+		pg_postmaster_start_time()`).Scan(&inRecovery, &pendingRestart, &postmasterStart)
+	return
+}
+
 // ServerVersionNum is server_version_num: major*10000 + minor.
 func (d *DB) ServerVersionNum(ctx context.Context) (int, error) {
 	var n int

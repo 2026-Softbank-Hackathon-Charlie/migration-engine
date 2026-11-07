@@ -297,4 +297,5 @@ func TestSourceWriteFenceCNPGShutdownCheckpoint(t *testing.T) {
 		t.Fatalf("startup race accounting failed: committed=%d afterDemotion=%d", committed, afterDemotion)
 	}
 	t.Logf("real CNPG checkpoint=%s lateCommitLSN=%s targetLateRows=%d oldStartupBackendTerminated=true", proof.FinalFenceLSN, lateCommitLSN, committed)
+	t.Logf("real CNPG timingMillis=%v writeHoldMillis=%d", e.State().Steps[StepSwitchover].Evidence["timingMillis"], e.State().DowntimeMillis)
 }

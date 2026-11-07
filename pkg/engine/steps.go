@@ -405,11 +405,14 @@ func (e *Engine) switchover(ctx context.Context) (map[string]any, error) {
 			}
 		}
 		lap("finalReadonlyFence")
+		e.log(StepSwitchover, "source SQL shutdown checkpoint and post-demotion gate confirmed", map[string]any{"finalFenceLsn": finalLSN, "durationMillis": timing["finalReadonlyFence"]})
 		// The source now rejects writes through PostgreSQL recovery. Allow source
 		// fallback reads while the target performs its promotion restart.
 		if err = e.restoreSourceWriteFence(tctx, false); err != nil {
 			return ev, fmt.Errorf("restore read admission on confirmed source replica: %w", err)
 		}
+		lap("restoreSourceReadAdmission")
+		e.log(StepSwitchover, "source read admission restored on confirmed replica", map[string]any{"durationMillis": timing["restoreSourceReadAdmission"]})
 		ev["sourceReadAdmissionRestoredOnReplica"] = true
 	}
 

@@ -38,7 +38,7 @@ func (f *WriterFence) VerifySystemIdentifier(ctx context.Context, expected strin
 
 func (d *DB) SystemIdentifier(ctx context.Context) (string, error) {
 	var actual string
-	if err := d.Pool.QueryRow(ctx, `SELECT system_identifier::text FROM pg_control_system()`).Scan(&actual); err != nil {
+	if err := d.Pool.QueryRow(ctx, `SELECT system_identifier::text FROM pg_catalog.pg_control_system()`).Scan(&actual); err != nil {
 		return "", fmt.Errorf("SQL system identifier cannot be observed: %w", err)
 	}
 	if !SameSystemIdentifier(actual, actual) {
@@ -59,7 +59,7 @@ func SameSystemIdentifier(actual, expected string) bool {
 // shutdown checkpoint can legitimately have no pg_last_wal_replay_lsn yet.
 func (d *DB) CheckpointREDOLSN(ctx context.Context) (string, error) {
 	var lsn string
-	err := d.Pool.QueryRow(ctx, `SELECT redo_lsn::text FROM pg_control_checkpoint() WHERE redo_lsn>'0/0'::pg_lsn`).Scan(&lsn)
+	err := d.Pool.QueryRow(ctx, `SELECT redo_lsn::text FROM pg_catalog.pg_control_checkpoint() WHERE redo_lsn>'0/0'::pg_catalog.pg_lsn`).Scan(&lsn)
 	if err != nil {
 		return "", fmt.Errorf("SQL control checkpoint cannot be observed: %w", err)
 	}

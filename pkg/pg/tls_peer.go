@@ -81,6 +81,12 @@ func (d *DB) PinTLSPeer(ctx context.Context, expected string) error {
 }
 
 func pinPoolConfig(cfg *pgxpool.Config, expected string) error {
+	// A database owner can set a DB default search_path. Never let an
+	// application schema shadow the catalog functions that attest the fence.
+	if cfg.ConnConfig.RuntimeParams == nil {
+		cfg.ConnConfig.RuntimeParams = map[string]string{}
+	}
+	cfg.ConnConfig.RuntimeParams["search_path"] = "pg_catalog"
 	var err error
 	cfg.ConnConfig.TLSConfig, err = pinPeer(cfg.ConnConfig.TLSConfig, expected)
 	if err != nil {

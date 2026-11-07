@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"io"
 	"net"
 	"net/http/httptest"
@@ -50,6 +51,19 @@ func TestPinnedSQLPeerRejectsRedirectAndPreservesTLSVerification(t *testing.T) {
 	}
 	if _, err = pinPeer(&tls.Config{}, "invalid"); err == nil {
 		t.Fatal("invalid peer fingerprint accepted")
+	}
+}
+
+func TestPinnedObserverCannotInheritApplicationSearchPath(t *testing.T) {
+	cfg, err := pgxpool.ParseConfig("postgres://observer:fixture@127.0.0.1/app?sslmode=require&search_path=public,pg_catalog")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = pinPoolConfig(cfg, strings.Repeat("0", 64)); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ConnConfig.RuntimeParams["search_path"] != "pg_catalog" {
+		t.Fatal("application schema can shadow observer catalog functions")
 	}
 }
 

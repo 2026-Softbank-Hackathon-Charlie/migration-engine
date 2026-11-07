@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/plan"
 )
@@ -77,15 +78,15 @@ func TestStatelessMigration(t *testing.T) {
 	assertOrder(t, calls,
 		"gw.health",
 		statelessSmoke, // precheck: the target app answers
-		"files.sync",   // prepare
+		"files.copy",   // prepare
 		"gw.hold",
 		"gw.route gke",
 		"gw.release",
 	)
-	if n := count(calls, "files.sync"); n != 3 {
-		t.Errorf("files.sync %d times, want prepare, delta and fence: %v", n, calls)
+	if n := count(calls, "files.copy"); n != 3 {
+		t.Errorf("files.copy %d times, want prepare, delta and fence: %v", n, calls)
 	}
-	if i := slicesIndexAfter(calls, "gw.hold", "files.sync"); i < 0 || i > indexOf(t, calls, "gw.route gke") {
+	if i := slicesIndexAfter(calls, "gw.hold", "files.copy"); i < 0 || i > indexOf(t, calls, "gw.route gke") {
 		t.Fatalf("no last file copy between the hold and the route: %v", calls)
 	}
 	if i := slicesIndexAfter(calls, "gw.release", statelessSmoke); i < 0 {
@@ -145,7 +146,7 @@ func TestStatelessFailureBeforeFence(t *testing.T) {
 	h = newStatelessHarness(t, "")
 	h.w.files.checkErr = errors.New("bucket unreachable")
 	e = h.engine(t, "")
-	if err := e.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "files remotes") {
+	if err := e.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "files source") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -193,9 +194,51 @@ func TestStatelessFailureBeforeReleaseRollsBack(t *testing.T) {
 	}
 }
 
-// After the cutover released the writes a failed verify still routes back:
-// no database moved, only files written to the target since are left there.
+// runUntil runs every step before stop.
+func runUntil(t *testing.T, e *Engine, stop string) {
+	t.Helper()
+	for _, s := range Steps[:slices.Index(Steps, stop)] {
+		if err := e.RunStep(context.Background(), s); err != nil {
+			t.Fatal(s, err)
+		}
+	}
+}
+
+// After the cutover released the writes, a failed verify of a plan without
+// files routes back: nothing but the route moved.
 func TestStatelessRollbackAfterRelease(t *testing.T) {
+	h := newStatelessHarness(t, warmSmokeApp)
+	h.p.Files = nil
+	e := h.engine(t, "")
+	runUntil(t, e, StepVerify)
+	h.w.prober.status = 500
+	if err := e.Run(context.Background()); err == nil {
+		t.Fatal("run succeeded")
+	}
+	st := e.State()
+	if st.Outcome != OutcomeRolledBack || st.FailureStep != StepVerify {
+		t.Fatalf("outcome %s at %s (%s)", st.Outcome, st.FailureStep, st.RollbackError)
+	}
+	calls := h.w.Calls()
+	assertOrder(t, calls, "gw.route gke", "gw.release", "gw.route eks")
+	if n := count(calls, "gw.release"); n != 1 {
+		t.Errorf("gw.release %d times; nothing was held at the rollback: %v", n, calls)
+	}
+	if st.TrafficOnTarget || h.w.gw.routedTo != "eks" {
+		t.Errorf("traffic still on target: %+v", st)
+	}
+	var msgs []string
+	for _, ev := range h.kinds(EventRollback) {
+		msgs = append(msgs, ev.Message)
+	}
+	if !strings.Contains(strings.Join(msgs, "|"), "second traffic flip") {
+		t.Errorf("rollback events do not name the second flip: %v", msgs)
+	}
+}
+
+// With files, a failure after the cutover halts with traffic on the target:
+// users may have written files there. The resume routes back.
+func TestStatelessFilesHaltAfterRelease(t *testing.T) {
 	cases := map[string]func(w *world){
 		"files missing on target": func(w *world) { w.files.checkMissing = 2 },
 		"target app fails smoke":  func(w *world) { w.prober.status = 500 },
@@ -204,35 +247,62 @@ func TestStatelessRollbackAfterRelease(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h := newStatelessHarness(t, warmSmokeApp)
 			e := h.engine(t, "")
-			for _, s := range Steps[:slices.Index(Steps, StepVerify)] {
-				if err := e.RunStep(context.Background(), s); err != nil {
-					t.Fatal(s, err)
-				}
-			}
+			runUntil(t, e, StepVerify)
 			fault(h.w)
 			if err := e.Run(context.Background()); err == nil {
 				t.Fatal("run succeeded")
 			}
 			st := e.State()
-			if st.Outcome != OutcomeRolledBack || st.FailureStep != StepVerify {
-				t.Fatalf("outcome %s at %s (%s)", st.Outcome, st.FailureStep, st.RollbackError)
+			if st.Outcome != OutcomeHalted || !st.TrafficOnTarget || st.WritesHeld || h.w.gw.routedTo != "gke" {
+				t.Fatalf("not halted on the target: %+v routed %s", st, h.w.gw.routedTo)
 			}
-			calls := h.w.Calls()
-			assertOrder(t, calls, "gw.route gke", "gw.release", "gw.route eks")
-			if n := count(calls, "gw.release"); n != 1 {
-				t.Errorf("gw.release %d times; nothing was held at the rollback: %v", n, calls)
+			if contains(h.w.Calls(), "gw.route eks") {
+				t.Fatalf("routed back without the operator: %v", h.w.Calls())
 			}
-			if st.TrafficOnTarget || h.w.gw.routedTo != "eks" {
-				t.Errorf("traffic still on target: %+v", st)
+			h.w.files.checkMissing, h.w.prober.status = 0, 0
+			resumed := h.engine(t, e.RunID())
+			if err := resumed.ResumeHalted(context.Background()); !errors.Is(err, ErrResumeRolledBackStateless) || !errors.Is(err, ErrResumeRolledBack) {
+				t.Fatalf("resume: %v", err)
 			}
-			var msgs []string
-			for _, ev := range h.kinds(EventRollback) {
-				msgs = append(msgs, ev.Message)
-			}
-			if !strings.Contains(strings.Join(msgs, "|"), "not copied back") {
-				t.Errorf("rollback events do not warn about target files: %v", msgs)
+			if st := resumed.State(); st.Outcome != OutcomeRolledBack || st.TrafficOnTarget || h.w.gw.routedTo != "eks" {
+				t.Fatalf("after resume: %+v", st)
 			}
 		})
+	}
+}
+
+// Cancelling the caller's context during verify does not undo a migration
+// that went through; the resume repeats verify and finishes.
+func TestStatelessCancelAfterCutoverHalts(t *testing.T) {
+	h := newStatelessHarness(t, warmSmokeApp)
+	h.p.Files = nil
+	e := h.engine(t, "")
+	runUntil(t, e, StepVerify)
+	h.w.prober.status = 500 // verify keeps retrying until the cancel
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		for deadline := time.Now().Add(5 * time.Second); count(h.w.Calls(), statelessSmoke) < 2 && time.Now().Before(deadline); {
+			time.Sleep(time.Millisecond)
+		}
+		cancel()
+	}()
+	if err := e.Run(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v", err)
+	}
+	st := e.State()
+	if st.Outcome != OutcomeHalted || !st.TrafficOnTarget || contains(h.w.Calls(), "gw.route eks") {
+		t.Fatalf("cancel rolled back or did not halt: %+v %v", st, h.w.Calls())
+	}
+	h.w.prober.status = 0
+	resumed := h.engine(t, e.RunID())
+	if err := resumed.ResumeHalted(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := resumed.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if st := resumed.State(); st.Outcome != OutcomeSucceeded || h.w.gw.routedTo != "gke" {
+		t.Fatalf("after resume: %+v", st)
 	}
 }
 

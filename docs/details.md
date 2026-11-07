@@ -163,7 +163,10 @@ postgres 리소스가 없는 앱은 게이트웨이 경로와 파일만 옮깁�
 - 원본과 대상 모두 `kind: none`이어야 하고 `env`만 씁니다. cold 앱이면 `target.namespace`(필수), `kubeconfig`, `context`를 받습니다.
 - `gateway.mode: http`가 필수입니다. `verify.schemas`, `tables`, `writtenRecords`, `fenceGate: true`, `decommission`은 받지 않습니다.
 - presync와 switchover는 건너뜁니다. fence는 쓰기를 붙잡고 마지막 파일 복사를 하고, cutover가 경로를 옮깁니다.
-- 어느 단계에서 실패해도, cutover 뒤라도 원본으로 경로를 돌립니다. cutover 뒤 대상에 쓰인 파일은 원본으로 복사하지 않습니다.
+- 파일은 `rclone copy`로 옮깁니다(대상에서 지우지 않음). precheck는 원본만 `rclone lsf --max-depth 1`로 읽어 봅니다.
+- fence부터 cutover까지 실패하면 원본으로 경로를 돌립니다. cutover 뒤 실패는 files가 없으면 원본으로 되돌리고, files가 있으면 경로를 대상에 둔 채 halt합니다. `-resume-halted`가 원본으로 돌리고, 대상에만 있는 파일은 복사하지 않습니다.
+- cutover 뒤 취소(Ctrl-C)는 halt이고, `-resume-halted`가 남은 단계를 다시 돌립니다.
+- 이미 열린 WebSocket 세션은 쓰기 정지에 붙잡히지 않습니다(ADR 0018).
 
 ### C. 게이트웨이 HTTP 계약 (`pkg/gateway`, 아직 제안 단계)
 | 요청 | 의미 |

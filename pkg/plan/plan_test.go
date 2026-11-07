@@ -278,6 +278,9 @@ func TestStateless(t *testing.T) {
 		"verify tables":            {src, dst, `,"verify":{"tables":["public.t"]}`, "verify.schemas"},
 		"written records":          {src, dst, `,"verify":{"writtenRecords":"w.jsonl"}`, "verify.schemas"},
 		"decommission":             {src, dst, `,"decommission":{"selector":"app=doom","smokeUrl":"http://gw","smoke":[{"method":"GET","path":"/"}]}`, "decommission"},
+		"warm app kind":            {src, `{"kind":"none","env":"gke","app":{"kind":"Deployment","name":"doom"}}`, "", "only for target.app.mode cold"},
+		"same backends":            {src, dst, `,"gateway":{"mode":"http","url":"http://gw","targetBackend":"eks"}`, "route would not move"},
+		"kind mix message":         {src, `{"env":"gke","namespace":"n","cluster":"c","dsn":"y"}`, "", "(cnpg)"},
 		"same env":                 {src, `{"kind":"none","env":"eks"}`, "", "both"},
 	}
 	for name, c := range bad {

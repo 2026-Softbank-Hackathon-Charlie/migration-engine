@@ -533,8 +533,8 @@ func (g *fakeGateway) Route(_ context.Context, b string) error {
 type fakeFiles struct {
 	w       *world
 	syncErr error
-	// checkErr fails rclone check (a remote cannot be read); checkMissing
-	// reports objects missing on the target.
+	// checkErr fails rclone check and lsf (a remote cannot be read);
+	// checkMissing reports objects missing on the target.
 	checkErr     error
 	checkMissing int
 }
@@ -543,6 +543,14 @@ func (f *fakeFiles) Available() error { return nil }
 func (f *fakeFiles) Sync(context.Context, string, string) (files.SyncResult, error) {
 	f.w.record("files.sync")
 	return files.SyncResult{}, f.syncErr
+}
+func (f *fakeFiles) Copy(context.Context, string, string) (files.SyncResult, error) {
+	f.w.record("files.copy")
+	return files.SyncResult{}, f.syncErr
+}
+func (f *fakeFiles) Readable(_ context.Context, remote string) error {
+	f.w.record("files.readable " + remote)
+	return f.checkErr
 }
 func (f *fakeFiles) Check(context.Context, string, string) (files.CheckResult, error) {
 	if f.checkErr != nil {

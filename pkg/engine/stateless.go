@@ -4,26 +4,33 @@ package engine
 // and target.kind are both "none". Only the gateway route moves, plus the
 // files when the plan has them. The steps keep their names:
 //
-//	precheck    gateway reachable, files remotes readable, target app answers
+//	precheck    gateway reachable, files source readable, target app answers
 //	prepare     stop a cold target app, first file copy
 //	presync     skipped (no database to catch up)
 //	delta       copy the files changed since prepare
-//	fence       hold writes at the gateway, last file copy
+//	fence       hold writes at the gateway, last file copy (within maxDowntime)
 //	switchover  skipped (no database to promote)
 //	start-target  start a cold target app (shared, ADR 0012)
 //	cutover     route to the target and release the held writes (shared)
 //	verify      files one way, smoke the target app when the plan has smoke
 //	finalize    record the end state
 //
-// Rollback: no data lives in a database, so a failure at any step, the
-// cutover included and after it, routes the gateway back to the source and
-// releases held writes there. Objects written to the target's files after
-// the cutover are not copied back.
+// Files are copied with rclone copy, never sync: a copy does not delete
+// target objects missing on the source, such as uploads written to the
+// target after an earlier cutover.
+//
+// Rollback: no data lives in a database, so a failure from the fence up to
+// the cutover routes the gateway back to the source and releases held writes
+// there. After the cutover moved traffic, a plan without files is routed back
+// too; a plan with files halts instead (users may have written files to the
+// target that the source lacks) and waits for -resume-halted. A cancelled
+// context after the cutover also halts: the migration itself succeeded.
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -47,7 +54,13 @@ var statelessSkip = map[string]string{
 
 // ErrResumeRolledBackStateless is returned by ResumeHalted when it finished a
 // halted stateless run by routing it back to the source: the run is over.
-var ErrResumeRolledBackStateless = errors.New("halted stateless run rolled back to the source")
+// errors.Is matches ErrResumeRolledBack too.
+var ErrResumeRolledBackStateless error = statelessRolledBack{}
+
+type statelessRolledBack struct{}
+
+func (statelessRolledBack) Error() string { return "halted stateless run rolled back to the source" }
+func (statelessRolledBack) Unwrap() error { return ErrResumeRolledBack }
 
 // statelessPrecheck: the gateway answers, the files remotes can be read, and
 // a warm target app with smoke requests answers them.
@@ -60,12 +73,10 @@ func (e *Engine) statelessPrecheck(ctx context.Context) (map[string]any, error) 
 		if err := e.rclone.Available(); err != nil {
 			return ev, err
 		}
-		// rclone check fails (rather than reporting differences) when a remote
-		// cannot be read; before the first copy differences are expected.
-		c, err := e.rclone.Check(ctx, e.plan.Files.Source, e.plan.Files.Target)
-		ev["filesBefore"] = c
-		if err != nil {
-			return ev, fmt.Errorf("files remotes: %w", err)
+		// Only the source: the target path may not exist before the first
+		// migration, and the first copy creates it.
+		if err := e.rclone.Readable(ctx, e.plan.Files.Source); err != nil {
+			return ev, fmt.Errorf("files source: %w", err)
 		}
 	}
 	a := e.plan.Target.App
@@ -122,15 +133,20 @@ func (e *Engine) statelessFence(ctx context.Context) (map[string]any, error) {
 	e.setFlags(func(s *State) { s.WritesHeld, s.WritesHeldAt = true, &now })
 	ev["writesHeldAt"] = now
 	e.log(StepFence, "writes held at gateway", nil)
-	return ev, e.statelessSync(ctx, ev)
+	// Writes stay held for this copy: bound it by the downtime budget.
+	sctx, cancel := context.WithTimeout(ctx, e.plan.Thresholds.MaxDowntime.Duration)
+	defer cancel()
+	return ev, e.statelessSync(sctx, ev)
 }
 
+// statelessSync copies new and changed files and never deletes from the
+// target (ADR 0018).
 func (e *Engine) statelessSync(ctx context.Context, ev map[string]any) error {
 	if e.rclone == nil {
 		return nil
 	}
-	r, err := e.rclone.Sync(ctx, e.plan.Files.Source, e.plan.Files.Target)
-	ev["filesSync"] = r
+	r, err := e.rclone.Copy(ctx, e.plan.Files.Source, e.plan.Files.Target)
+	ev["filesCopy"] = r
 	return err
 }
 
@@ -147,6 +163,10 @@ func (e *Engine) statelessVerify(ctx context.Context) (map[string]any, error) {
 			rep.Problems = append(rep.Problems, err.Error())
 			rep.OK = false
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		// Cancelled, not a verification result (onStatelessFailure halts).
+		return ev, err
 	}
 	if !rep.OK {
 		return ev, fmt.Errorf("verification failed: %s", strings.Join(rep.Problems, "; "))
@@ -177,7 +197,8 @@ func (e *Engine) statelessFinalize(context.Context) (map[string]any, error) {
 }
 
 // onStatelessFailure applies the rollback of a stateless plan: whenever the
-// gateway holds writes or routes to the target, route back and release.
+// gateway holds writes or routes to the target, route back and release,
+// except where routing back after the cutover could lose users' work.
 func (e *Engine) onStatelessFailure(step string, cause error) error {
 	if !e.state.WritesHeld && !e.state.TrafficOnTarget {
 		e.mu.Lock()
@@ -186,11 +207,28 @@ func (e *Engine) onStatelessFailure(step string, cause error) error {
 		e.save()
 		return fmt.Errorf("%s: %w", step, cause)
 	}
+	if e.state.TrafficOnTarget {
+		reason := ""
+		switch {
+		case afterCutover(step) && errors.Is(cause, context.Canceled):
+			reason = "cancelled after the cutover; traffic stays on the target. -resume-halted repeats the remaining steps"
+		case e.plan.Files != nil:
+			reason = "failed after the cutover with files: users may have written files to the target that the source lacks, so traffic stays on the target. -resume-halted routes back to the source; copy the target's new files to the source first if they matter"
+		}
+		if reason != "" {
+			e.mu.Lock()
+			e.state.Outcome = OutcomeHalted
+			e.mu.Unlock()
+			e.save()
+			e.emit(step, EventHalt, reason, map[string]any{"writesHeld": e.state.WritesHeld, "trafficOnTarget": true})
+			return fmt.Errorf("halted at %s: %w", step, cause)
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), e.plan.Thresholds.SwitchoverTimeout.Duration+rollbackSlack)
 	defer cancel()
 	msg := "routing back to the source"
 	if e.state.TrafficOnTarget {
-		msg += "; files written to the target since cutover are not copied back"
+		msg = "failed after the cutover: moving traffic back to the source (a second traffic flip)"
 	}
 	e.emit(step, EventRollback, msg, nil)
 	rbErr := e.rollbackStateless(ctx)
@@ -234,10 +272,26 @@ func (e *Engine) rollbackStateless(ctx context.Context) error {
 	return nil
 }
 
-// resumeHaltedStateless finishes a halted stateless run by rolling it back.
-// An interrupted fence, start-target or cutover may have held writes or moved
-// the route without saving it, so both are undone.
+// afterCutover reports whether step runs after the cutover released writes.
+func afterCutover(step string) bool {
+	return slices.Index(Steps, step) > slices.Index(Steps, StepCutover)
+}
+
+// resumeHaltedStateless finishes a halted stateless run. A run cancelled
+// after the cutover carries on: Run repeats its remaining steps. Any other
+// halt is rolled back: an interrupted fence, start-target or cutover may have
+// held writes or moved the route without saving it, so both are undone.
 func (e *Engine) resumeHaltedStateless(ctx context.Context, st State) error {
+	if afterCutover(st.FailureStep) && st.TrafficOnTarget && !st.WritesHeld &&
+		strings.Contains(st.FailureError, context.Canceled.Error()) {
+		e.mu.Lock()
+		e.state.Outcome = OutcomeRunning
+		e.state.FailureStep, e.state.FailureError = "", ""
+		e.mu.Unlock()
+		e.save()
+		e.log(st.FailureStep, "resumed after a cancel: traffic is on the target, repeating the remaining steps", nil)
+		return nil
+	}
 	cctx, cancel := context.WithTimeout(ctx, e.plan.Thresholds.SwitchoverTimeout.Duration+rollbackSlack)
 	defer cancel()
 	for _, step := range []string{StepFence, StepStartTarget, StepCutover} {

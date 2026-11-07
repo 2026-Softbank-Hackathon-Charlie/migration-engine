@@ -392,10 +392,10 @@ func (p *Plan) validateKinds() []error {
 			}
 		}
 	default:
-		errs = append(errs, fmt.Errorf("source.kind must be %q or %q, got %q", SourceCNPG, SourceExternal, s.Kind))
+		errs = append(errs, fmt.Errorf("source.kind must be %q, %q or %q, got %q", SourceCNPG, SourceExternal, KindNone, s.Kind))
 	}
 	if p.Target.Kind != "" && p.Target.Kind != SourceCNPG {
-		errs = append(errs, fmt.Errorf("target.kind must be %q, got %q", SourceCNPG, p.Target.Kind))
+		errs = append(errs, fmt.Errorf("target.kind must be %q or %q, got %q", SourceCNPG, KindNone, p.Target.Kind))
 	}
 	if p.Target.Name != "" {
 		errs = append(errs, errors.New("target.name is not supported (external source only)"))
@@ -412,7 +412,7 @@ func (p *Plan) validateKinds() []error {
 func (p *Plan) validateStateless() []error {
 	var errs []error
 	if !p.Stateless() {
-		return []error{fmt.Errorf("source.kind and target.kind must both be %q for an app without a database (got %q and %q)", KindNone, p.Source.Kind, p.Target.Kind)}
+		return []error{fmt.Errorf("source.kind and target.kind must both be %q for an app without a database (got %s and %s)", KindNone, kindName(p.Source.Kind), kindName(p.Target.Kind))}
 	}
 	cold := p.Target.App.Cold()
 	for role, e := range map[string]Endpoint{"source": p.Source, "target": p.Target} {
@@ -444,8 +444,16 @@ func (p *Plan) validateStateless() []error {
 	if cold && p.Target.Namespace == "" {
 		errs = append(errs, errors.New("target.namespace is required with target.app.mode cold (where the target app runs)"))
 	}
-	if a := p.Target.App; a != nil && !cold && (a.SmokeURL != "" || len(a.Smoke) > 0) {
-		errs = append(errs, a.validateSmoke()...)
+	if a := p.Target.App; a != nil && !cold {
+		if a.Kind != "" || a.Name != "" || a.Replicas != 0 {
+			errs = append(errs, errors.New("target.app.kind, name and replicas are only for target.app.mode cold (a warm app is not scaled)"))
+		}
+		if a.SmokeURL != "" || len(a.Smoke) > 0 {
+			errs = append(errs, a.validateSmoke()...)
+		}
+	}
+	if p.Gateway.SourceBackend == p.Gateway.TargetBackend {
+		errs = append(errs, fmt.Errorf("gateway.sourceBackend and targetBackend are both %q: the route would not move", p.Gateway.SourceBackend))
 	}
 	if p.Gateway.Mode != "http" {
 		// Moving the gateway route is the whole migration.
@@ -462,6 +470,14 @@ func (p *Plan) validateStateless() []error {
 		errs = append(errs, fmt.Errorf("decommission is not supported for kind %q yet (it retires a source database)", KindNone))
 	}
 	return errs
+}
+
+// kindName shows an endpoint kind, the empty default as cnpg.
+func kindName(k string) string {
+	if k == "" {
+		return `"" (cnpg)`
+	}
+	return fmt.Sprintf("%q", k)
 }
 
 func (a *AppSpec) validate(p *Plan) []error {

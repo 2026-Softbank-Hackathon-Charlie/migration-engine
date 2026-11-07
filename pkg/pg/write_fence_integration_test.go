@@ -271,8 +271,15 @@ func TestSourceHBAWriteFence(t *testing.T) {
 	}
 	// Force the cached number to match the replacement's PID. Even PID reuse
 	// must not make a fresh connection count as the original observer.
-	if err = observer.Pool.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&fence.pid); err != nil {
-		t.Fatal(err)
+	for {
+		if err = observer.Pool.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&fence.pid); err == nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("replacement observer did not connect")
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 	if err = fence.Pinned(ctx); err == nil {
 		t.Fatal("a replacement observer was accepted because its PID matched")

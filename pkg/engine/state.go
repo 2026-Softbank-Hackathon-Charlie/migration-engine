@@ -55,6 +55,8 @@ type State struct {
 	FailureStep      string     `json:"failureStep,omitempty"`
 	FailureError     string     `json:"failureError,omitempty"`
 	RollbackError    string     `json:"rollbackError,omitempty"`
+	SourceFenced     bool       `json:"sourceFenced,omitempty"` // external source asked to refuse writes (ADR 0019)
+	FenceXid         string     `json:"fenceXid,omitempty"`     // external source's next xid at the fence
 }
 
 func newState(runID, planID string) *State {

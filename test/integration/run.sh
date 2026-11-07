@@ -9,4 +9,6 @@ trap '"${compose[@]}" down -v >/dev/null 2>&1 || true' EXIT
 export HOPCHARLIE_IT_PRIMARY_DSN="postgres://postgres:it@127.0.0.1:55432/shop?sslmode=disable"
 export HOPCHARLIE_IT_STANDBY_DSN="postgres://postgres:it@127.0.0.1:55433/shop?sslmode=disable"
 cd "$here/../.."
-go test -tags integration -count=1 "$@" ./pkg/pg/... ./pkg/verify/...
+# -p 1: the external-source fence test (ADR 0019) makes the shared server
+# read-only for a moment, so the packages must not run at the same time.
+go test -tags integration -count=1 -p 1 "$@" ./pkg/pg/... ./pkg/verify/...

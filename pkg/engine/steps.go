@@ -127,12 +127,18 @@ func (e *Engine) prepare(ctx context.Context) (map[string]any, error) {
 		return ev, fmt.Errorf("target cluster not healthy: %w", err)
 	}
 	ev["target"] = d
-	s, err := e.src.Get(ctx)
-	if err != nil {
-		return ev, err
-	}
-	if err := e.checkPreparedTopology(s, d); err != nil {
-		return ev, err
+	var s *cnpg.Status
+	if e.plan.Source.External() {
+		if err := checkExternalTopology(e.plan.Source.Name, d); err != nil {
+			return ev, err
+		}
+	} else {
+		if s, err = e.src.Get(ctx); err != nil {
+			return ev, err
+		}
+		if err := e.checkPreparedTopology(s, d); err != nil {
+			return ev, err
+		}
 	}
 
 	// Right after CNPG reports the new cluster healthy its service may still
@@ -373,7 +379,9 @@ func (e *Engine) startTarget(ctx context.Context) (map[string]any, error) {
 	ev := map[string]any{"kind": a.Kind, "name": a.Name, "replicas": a.Replicas}
 	timeout := a.StartTimeout.Duration
 	var held time.Duration
-	if e.state.WritesHeldAt != nil {
+	// An external source's run cannot be undone after promotion (ADR 0019):
+	// failing on the budget would only halt with writes held. Start the app.
+	if e.state.WritesHeldAt != nil && !e.plan.Source.External() {
 		held = time.Since(*e.state.WritesHeldAt)
 		if left := e.plan.Thresholds.MaxDowntime.Duration - held; left < timeout {
 			timeout = left

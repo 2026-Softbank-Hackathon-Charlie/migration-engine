@@ -168,3 +168,62 @@ func TestTargetAppModes(t *testing.T) {
 		t.Error("source.app accepted")
 	}
 }
+
+func TestExternalSource(t *testing.T) {
+	t.Setenv("LEGACY_PG_PASSWORD", "s3cret")
+	base := `{"id":"p","source":%s,
+	  "target":{"env":"eks","namespace":"n","cluster":"c2","dsn":"y","app":%s%s},
+	  "gateway":{"mode":"http","url":"http://gw:9901"}%s}`
+	src := `{"kind":"external","name":"legacy","env":"legacy","dsn":"postgres://app:${LEGACY_PG_PASSWORD}@db-legacy-shop:5432/app"}`
+	cold := `{"mode":"cold","kind":"Deployment","name":"web","replicas":1,
+	  "smokeUrl":"http://web.n.svc:8080","smoke":[{"method":"GET","path":"/healthz"}]}`
+	reindex := `,"reindex":["public.items_name_idx"]`
+
+	p, err := Parse([]byte(fmt.Sprintf(base, src, cold, reindex, "")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.Source.External() || p.Target.External() || !strings.Contains(p.Source.DSN, "s3cret") {
+		t.Errorf("source: %+v", p.Source)
+	}
+	if p.Gateway.SourceBackend != "legacy" || p.Target.Reindex[0] != "public.items_name_idx" {
+		t.Errorf("plan: %+v %+v", p.Gateway, p.Target)
+	}
+	// The CNPG default stays as it was: no kind is written.
+	p, err = Parse([]byte(valid))
+	if err != nil || p.Source.Kind != "" || p.Source.External() {
+		t.Fatalf("cnpg plan: %v %+v", err, p.Source)
+	}
+	if _, err := Parse([]byte(strings.Replace(valid, `"env":"gke"`, `"kind":"cnpg","env":"gke"`, 1))); err != nil {
+		t.Errorf("explicit kind cnpg: %v", err)
+	}
+
+	bad := map[string][4]string{
+		"no name":       {strings.Replace(src, `"name":"legacy",`, "", 1), cold, "", ""},
+		"no dsn":        {strings.Replace(src, `,"dsn":"postgres://app:${LEGACY_PG_PASSWORD}@db-legacy-shop:5432/app"`, "", 1), cold, "", ""},
+		"cluster set":   {strings.Replace(src, `"env":"legacy"`, `"env":"legacy","namespace":"n","cluster":"c1"`, 1), cold, "", ""},
+		"warm app":      {src, `{"mode":"warm"}`, "", ""},
+		"no app":        {src, `null`, "", ""},
+		"unknown kind":  {strings.Replace(src, `"external"`, `"rds"`, 1), cold, "", ""},
+		"bad reindex":   {src, cold, `,"reindex":["items_name_idx"]`, ""},
+		"decommission":  {src, cold, "", `,"decommission":{"selector":"app=shop","smokeUrl":"http://gw","smoke":[{"method":"GET","path":"/"}]}`},
+		"target extern": {src, cold, `,"kind":"external"`, ""},
+		"no fence gate": {src, cold, "", `,"verify":{"fenceGate":false}`},
+		"source rewire": {src, cold, "", `,"allowSourceRewire":true`},
+		"space reindex": {src, cold, `,"reindex":["public.items name"]`, ""},
+	}
+	for name, c := range bad {
+		if _, err := Parse([]byte(fmt.Sprintf(base, c[0], c[1], c[2], c[3]))); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	cnpgSrc := `{"env":"gke","namespace":"n","cluster":"c1","dsn":"x"}`
+	for name, c := range map[string][2]string{
+		"reindex with cnpg source": {cnpgSrc, reindex},
+		"name with cnpg source":    {strings.Replace(cnpgSrc, `"env"`, `"name":"legacy","env"`, 1), ""},
+	} {
+		if _, err := Parse([]byte(fmt.Sprintf(base, c[0], cold, c[1], ""))); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

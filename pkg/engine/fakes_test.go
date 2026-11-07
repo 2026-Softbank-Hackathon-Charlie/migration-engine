@@ -11,6 +11,7 @@ import (
 
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/cnpg"
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/files"
+	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/pg"
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/plan"
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/verify"
 )
@@ -53,6 +54,11 @@ type world struct {
 	prober                *fakeProber
 	dstDemoteErr          error // demoting the promoted target fails
 	noTargetDemotionToken bool  // the demoted target never publishes a token
+
+	// External source (ADR 0019): the target promotes without a token.
+	external   *fakeExternal
+	reindex    []string // indexes rebuilt on the target, in order
+	reindexErr error
 
 	calls []string // ordered log of every side effect, for order assertions
 }
@@ -199,7 +205,7 @@ func (c *fakeCluster) SetPrimary(_ context.Context, primary, token string) error
 			c.st.Phase = "Primary instance is being restarted in-place"
 			w.srcDB.pendingRestart = true
 		}
-	case c.role == "dst" && primary == c.st.Self && token != "": // promote with token
+	case c.role == "dst" && primary == c.st.Self && (token != "" || w.external != nil): // promote (an external source's target needs no token)
 		w.promoted = true
 		if !w.targetNeverWakes {
 			w.dstDB.recovery = false
@@ -398,7 +404,91 @@ func (d *fakeDB) LSNDiff(_ context.Context, a, b string) (int64, error) {
 	return x - y, nil
 }
 
+func (d *fakeDB) IsIndex(context.Context, string) (bool, error) {
+	d.w.mu.Lock()
+	defer d.w.mu.Unlock()
+	return d.w.external == nil || !d.w.external.unknownIndex, nil
+}
+
+func (d *fakeDB) ReindexIndex(_ context.Context, name string) error {
+	d.w.record("reindex " + name)
+	d.w.mu.Lock()
+	defer d.w.mu.Unlock()
+	if d.w.reindexErr != nil {
+		return d.w.reindexErr
+	}
+	d.w.reindex = append(d.w.reindex, name)
+	return nil
+}
+
 func (d *fakeDB) Close() {}
+
+// --- external source (ADR 0019) ---
+
+// fakeExternal is a PostgreSQL primary outside CNPG; its WAL position is the
+// world's srcDB.
+type fakeExternal struct {
+	w          *world
+	readOnly   bool
+	nextXid    int
+	statusErr  error
+	fenceErr   error
+	unfenceErr error
+	// fenceAppliedErr: the fence is applied but its answer is an error.
+	fenceAppliedErr error
+	// fenceBlocks: the fence hangs until its context ends.
+	fenceBlocks bool
+	// writeSessions: client sessions holding an xid at the re-check.
+	writeSessions int
+	// stillReadOnlyAfterUnfence: the unfence never reaches new sessions.
+	stillReadOnlyAfterUnfence   bool
+	notSuperuser, noAlterSystem bool
+	overrides                   []string
+	unknownIndex                bool // IsIndex is false on the target
+}
+
+func (x *fakeExternal) Status(context.Context) (ExternalStatus, error) {
+	x.w.mu.Lock()
+	defer x.w.mu.Unlock()
+	if x.statusErr != nil {
+		return ExternalStatus{}, x.statusErr
+	}
+	return ExternalStatus{InRecovery: x.w.srcDB.recovery, ReadOnly: x.readOnly, NextXid: strconv.Itoa(x.nextXid),
+		WriteSessions: x.writeSessions, ReadOnlyOverrides: x.overrides,
+		Superuser: !x.notSuperuser, AllowAlterSystem: !x.noAlterSystem}, nil
+}
+
+func (x *fakeExternal) Fence(ctx context.Context) (pg.Fence, error) {
+	x.w.record("src.fence")
+	if x.fenceBlocks {
+		<-ctx.Done()
+		return pg.Fence{}, ctx.Err()
+	}
+	x.w.mu.Lock()
+	defer x.w.mu.Unlock()
+	if x.fenceErr != nil {
+		return pg.Fence{}, x.fenceErr
+	}
+	x.readOnly = true
+	f := pg.Fence{LSN: strconv.FormatInt(x.w.srcDB.pos, 10), NextXid: strconv.Itoa(x.nextXid), Terminated: 3}
+	if x.fenceAppliedErr != nil {
+		return pg.Fence{}, x.fenceAppliedErr
+	}
+	return f, nil
+}
+
+func (x *fakeExternal) Unfence(context.Context) error {
+	x.w.record("src.unfence")
+	x.w.mu.Lock()
+	defer x.w.mu.Unlock()
+	if x.unfenceErr != nil {
+		return x.unfenceErr
+	}
+	if !x.stillReadOnlyAfterUnfence {
+		x.readOnly = false
+	}
+	return nil
+}
 
 // --- gateway ---
 
@@ -562,12 +652,22 @@ func (h *harness) engine(t *testing.T, runID string) *Engine {
 		Verifier:      h.w.ver,
 		App:           h.w.app,
 		Prober:        h.w.prober,
+		External:      h.external(),
 		PollInterval:  8 * time.Millisecond,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return e
+}
+
+// external keeps the Options field a nil interface when the world has no
+// external source.
+func (h *harness) external() ExternalSource {
+	if h.w.external == nil {
+		return nil
+	}
+	return h.w.external
 }
 
 func (h *harness) kinds(kind string) []Event {

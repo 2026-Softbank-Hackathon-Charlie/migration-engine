@@ -15,6 +15,10 @@ import (
 // A standby's current replay LSN cannot replace this final commit boundary.
 func DemotionCheckpoint(token, systemID string) (string, error) {
 	bad := errors.New("CNPG demotion checkpoint is absent, invalid, or from another PostgreSQL system")
+	identifier, idErr := strconv.ParseUint(systemID, 10, 64)
+	if idErr != nil || identifier == 0 {
+		return "", bad
+	}
 	if len(token) > 16384 {
 		return "", bad
 	}

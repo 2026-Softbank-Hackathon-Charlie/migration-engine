@@ -29,4 +29,8 @@ func TestDemotionCheckpointRequiresIdentifiedNonzeroShutdownToken(t *testing.T) 
 			t.Fatal("absent checkpoint accepted")
 		}
 	}
+	valid["databaseSystemIdentifier"] = "0"
+	if _, err := DemotionCheckpoint(encode(valid), "0"); err == nil {
+		t.Fatal("zero token system identifier accepted")
+	}
 }

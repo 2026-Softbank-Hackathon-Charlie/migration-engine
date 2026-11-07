@@ -88,12 +88,12 @@ if [ "${SOURCE_WRITE_FENCE_REHEARSAL:-}" = 1 ]; then
     CREATE ROLE hop_observer LOGIN PASSWORD 'fixture-observer';
     GRANT pg_read_all_stats, pg_signal_backend TO hop_observer;
     GRANT SELECT ON ALL TABLES IN SCHEMA public TO hop_observer;
-    GRANT EXECUTE ON FUNCTION pg_control_system() TO hop_observer;"
+    GRANT EXECUTE ON FUNCTION pg_control_system() TO hop_observer;
+    ALTER ROLE app SET post_auth_delay='3';"
   kc exec pg-src-1 -c postgres -- psql -q -d app -v ON_ERROR_STOP=1 -c "GRANT EXECUTE ON FUNCTION pg_control_checkpoint() TO hop_observer;"
-  # An authenticated-but-not-yet-visible ordinary client reproduces the
-  # startup/session-snapshot gap; it must not outrun the final shutdown fence.
-  kc patch cluster pg-src --type merge -p '{"spec":{"postgresql":{"parameters":{"post_auth_delay":"3"}}}}' >/dev/null
-  kc wait cluster/pg-src --for=jsonpath='{.status.phase}'="Cluster in healthy state" --timeout=300s >/dev/null
+  # Role settings are read before PostAuthDelay and pgstat_bestart (PG17
+  # postinit.c). Delay only the app LOGIN, preserving operator/replication
+  # readiness; a server-wide delay would break CNPG's pg_isready timeout.
 fi
 
 # copy <from-kubeconfig> <to-kubeconfig> <secret> [key]: copy a Secret (only

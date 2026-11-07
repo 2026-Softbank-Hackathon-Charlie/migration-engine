@@ -184,6 +184,7 @@ func (f *WriterFence) Precheck(ctx context.Context) error {
 	// Keep the original connection, but never create a background replacement
 	// after it dies. ObserverAlive must not reconnect to manufacture evidence.
 	cfg.MaxConns, cfg.MinConns = 1, 0
+	cfg.MinIdleConns = 0
 	cfg.HealthCheckPeriod = 24 * time.Hour
 	cfg.MaxConnLifetime, cfg.MaxConnIdleTime = 0, 24*time.Hour
 	p, err := pgxpool.NewWithConfig(ctx, cfg)

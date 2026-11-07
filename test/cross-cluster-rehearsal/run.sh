@@ -32,6 +32,18 @@ ko() { kubectl --kubeconfig "$onprem" -n hop "$@"; }
 bin="$work/hopmigrate.exe"
 
 cleanup() {
+  local fixture_status=$?
+  if [ "$fixture_status" != 0 ] && [ "${SOURCE_WRITE_FENCE_REHEARSAL:-}" = 1 ]; then
+    # Fixture-only diagnostics, never Secret objects or connection strings.
+    for c in cloud onprem; do
+      kcfg="$work/$c.kubeconfig"
+      [ -f "$kcfg" ] || continue
+      kubectl --kubeconfig "$kcfg" -n hop get clusters -o 'custom-columns=NAME:.metadata.name,PHASE:.status.phase,READY:.status.readyInstances,SYSTEM:.status.systemID' || true
+      kubectl --kubeconfig "$kcfg" -n hop get pods || true
+      kubectl --kubeconfig "$kcfg" -n cnpg-system logs deploy/cnpg-controller-manager --tail=40 || true
+      kubectl --kubeconfig "$kcfg" -n hop logs -l cnpg.io/cluster --all-containers --tail=60 --max-log-requests=4 || true
+    done
+  fi
   [ -n "${KEEP:-}" ] || { kind delete cluster --name hopcloud >/dev/null 2>&1 || true; kind delete cluster --name hoponprem >/dev/null 2>&1 || true; }
 }
 trap cleanup EXIT
@@ -41,7 +53,9 @@ go build -o "$bin" ./cmd/hopmigrate
 for c in cloud onprem; do
   name=hop$c
   kcfg="$work/$c.kubeconfig"
-  kind get clusters 2>/dev/null | grep -qx "$name" || kind create cluster --config "$here/kind-$c.yaml" --kubeconfig "$kcfg"
+  image_args=()
+  [ -z "${KIND_NODE_IMAGE:-}" ] || image_args=(--image "$KIND_NODE_IMAGE")
+  kind get clusters 2>/dev/null | grep -qx "$name" || kind create cluster --config "$here/kind-$c.yaml" --kubeconfig "$kcfg" "${image_args[@]}"
   kind export kubeconfig --name "$name" --kubeconfig "$kcfg" >/dev/null
   kubectl --kubeconfig "$kcfg" apply --server-side -f "https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v$CNPG_VERSION/cnpg-$CNPG_VERSION.yaml" >/dev/null
   kubectl --kubeconfig "$kcfg" -n cnpg-system rollout status deploy/cnpg-controller-manager --timeout=300s >/dev/null
@@ -66,6 +80,19 @@ kc exec pg-src-1 -c postgres -- psql -q -d app -v ON_ERROR_STOP=1 -c "SET ROLE a
   INSERT INTO orders (total, note) SELECT g * 1.5, 'n' || g FROM generate_series(1, 20000) g;"
 PGPW="$(kc get secret pg-src-app -o jsonpath='{.data.password}' | base64 -d)"
 export PGPW
+
+if [ "${SOURCE_WRITE_FENCE_REHEARSAL:-}" = 1 ]; then
+  # Test-only observer, installed before basebackup so target reads use the
+  # same dedicated read-only identity. No production endpoint is accepted.
+  kc exec pg-src-1 -c postgres -- psql -q -d app -v ON_ERROR_STOP=1 -c "
+    CREATE ROLE hop_observer LOGIN PASSWORD 'fixture-observer';
+    GRANT pg_read_all_stats, pg_signal_backend TO hop_observer;
+    GRANT SELECT ON ALL TABLES IN SCHEMA public TO hop_observer;
+    GRANT EXECUTE ON FUNCTION pg_control_system() TO hop_observer;"
+  kc exec pg-src-1 -c postgres -- psql -q -d app -v ON_ERROR_STOP=1 -c "GRANT EXECUTE ON FUNCTION pg_control_checkpoint() TO hop_observer;"
+  # The Go fixture gates real SCRAM responses at the client; no server-wide or
+  # role startup delay and no extra app parameter authority are required.
+fi
 
 # copy <from-kubeconfig> <to-kubeconfig> <secret> [key]: copy a Secret (only
 # key when given, e.g. a CA's certificate without its private key). Values
@@ -101,7 +128,9 @@ copy "$cloud" "$onprem" pg-src-app
 echo "== target pg-dst on hoponprem (pg_basebackup across clusters)"
 started=$(date +%s)
 retry ko apply -f "$here/target.yaml"
-ko wait cluster/pg-dst --for=jsonpath='{.status.phase}'="Cluster in healthy state" --timeout=600s >/dev/null
+target_ready_timeout=600s
+[ "${SOURCE_WRITE_FENCE_REHEARSAL:-}" != 1 ] || target_ready_timeout=180s
+ko wait cluster/pg-dst --for=jsonpath='{.status.phase}'="Cluster in healthy state" --timeout="$target_ready_timeout" >/dev/null
 ko wait pod/pg-dst-1 --for=condition=Ready --timeout=300s >/dev/null
 echo "   healthy after $(( $(date +%s) - started ))s; wal receiver: $(ko exec pg-dst-1 -c postgres -- psql -tA -c 'select status from pg_stat_wal_receiver')"
 
@@ -110,6 +139,13 @@ copy "$onprem" "$cloud" pg-dst-ca ca.crt
 copy "$onprem" "$cloud" pg-dst-replication
 kc patch cluster pg-src --type merge --patch-file "$here/source-patch.json" >/dev/null
 kc wait cluster/pg-src --for=jsonpath='{.status.phase}'="Cluster in healthy state" --timeout=300s >/dev/null
+
+if [ "${SOURCE_WRITE_FENCE_REHEARSAL:-}" = 1 ]; then
+  export HOPCHARLIE_CNPG_FENCE_FIXTURE=disposable-kind
+  export HOPCHARLIE_CNPG_FENCE_WORK="$work"
+  go test -tags cnpgfence -count=1 -timeout 15m -run '^TestSourceWriteFenceCNPGShutdownCheckpoint$' -v ./pkg/engine
+  exit
+fi
 
 plan() { # plan <file> <id> <src> <srcKubeconfig> <srcCtx> <srcPort> <dst> <dstKubeconfig> <dstCtx> <dstPort>
   cat >"$1" <<EOF

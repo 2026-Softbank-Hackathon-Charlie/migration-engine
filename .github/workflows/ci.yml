@@ -34,3 +34,45 @@ jobs:
       # No cloud credentials, kubeconfig or production endpoints are used.
       - name: PostgreSQL primary and standby integration
         run: bash test/integration/run.sh -race -timeout 5m
+  cnpg-write-fence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Compile the real CNPG fixture before provisioning
+        run: go test -tags cnpgfence -run '^$' ./pkg/engine
+      - name: Install verified kind binary
+        run: |
+          curl --fail --location --retry 3 -o "$RUNNER_TEMP/kind" https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64
+          echo 'aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d  '"$RUNNER_TEMP/kind" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/kind"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Real CNPG shutdown checkpoint and source-only admission
+        env:
+          SOURCE_WRITE_FENCE_REHEARSAL: "1"
+          CNPG_VERSION: "1.30.1"
+          KIND_NODE_IMAGE: kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0
+          WORK: ${{ runner.temp }}/cnpg-fence
+          KEEP: "1"
+        run: bash test/cross-cluster-rehearsal/run.sh
+      - name: Report disposable CNPG failure diagnostics
+        if: failure()
+        run: |
+          for cluster in cloud onprem; do
+            fixture_config="$RUNNER_TEMP/cnpg-fence/$cluster.kubeconfig"
+            [ -f "$fixture_config" ] || continue
+            kubectl --kubeconfig "$fixture_config" -n hop get clusters -o 'custom-columns=NAME:.metadata.name,PHASE:.status.phase,READY:.status.readyInstances' || true
+            kubectl --kubeconfig "$fixture_config" -n hop get pods || true
+            kubectl --kubeconfig "$fixture_config" -n hop logs -l cnpg.io/cluster --all-containers --tail=80 --max-log-requests=4 || true
+            kubectl --kubeconfig "$fixture_config" -n hop get events --field-selector type=Warning --sort-by=.lastTimestamp | tail -15 || true
+          done
+      - name: Remove disposable kind clusters
+        if: always()
+        run: |
+          kind delete cluster --name hopcloud || true
+          kind delete cluster --name hoponprem || true

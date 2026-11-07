@@ -16,6 +16,17 @@ import (
 // distributed topology is wired both ways, and the tools are available.
 func (e *Engine) precheck(ctx context.Context) (map[string]any, error) {
 	ev := map[string]any{}
+	if e.plan.SourceWriteFence != nil {
+		if gw, ok := e.gw.(sourceFenceGateway); !ok {
+			return ev, errors.New("gateway cannot report source read drain")
+		} else if err := gw.SourceFenceSupported(ctx); err != nil {
+			return ev, err
+		}
+		if err := e.prepareSourceWriteFence(ctx); err != nil {
+			return ev, fmt.Errorf("source SQL write fence precheck: %w", err)
+		}
+		ev["sourceWriteFenceConfigured"] = true
+	}
 	s, err := e.src.Get(ctx)
 	if err != nil {
 		return ev, err
@@ -235,6 +246,11 @@ func (e *Engine) delta(ctx context.Context) (map[string]any, error) {
 // the last files. Downtime for writes starts here.
 func (e *Engine) fence(ctx context.Context) (map[string]any, error) {
 	ev := map[string]any{}
+	if e.plan.SourceWriteFence != nil && e.writeFencer == nil {
+		if err := e.prepareSourceWriteFence(ctx); err != nil {
+			return ev, err
+		}
+	}
 	if err := e.gw.HoldWrites(ctx); err != nil {
 		return ev, fmt.Errorf("hold writes: %w", err)
 	}
@@ -242,6 +258,13 @@ func (e *Engine) fence(ctx context.Context) (map[string]any, error) {
 	e.setFlags(func(s *State) { s.WritesHeld, s.WritesHeldAt = true, &now })
 	ev["writesHeldAt"] = now
 	e.log(StepFence, "writes held at gateway", nil)
+	if e.plan.SourceWriteFence != nil {
+		proof, err := e.acquireSourceWriteFence(ctx)
+		ev["sourceWriteFence"] = proof
+		if err != nil {
+			return ev, fmt.Errorf("source SQL write fence: %w", err)
+		}
+	}
 
 	src, err := e.sourceDB(ctx)
 	if err != nil {
@@ -253,6 +276,9 @@ func (e *Engine) fence(ctx context.Context) (map[string]any, error) {
 	}
 	e.setFlags(func(s *State) { s.FenceLSN = lsn })
 	ev["fenceLsn"] = lsn
+	if e.plan.SourceWriteFence != nil {
+		ev["fenceLsnKind"] = "provisional_until_source_sql_recovery"
+	}
 
 	if e.rclone != nil {
 		r, err := e.rclone.Sync(ctx, e.plan.Files.Source, e.plan.Files.Target)
@@ -296,7 +322,7 @@ func (e *Engine) switchover(ctx context.Context) (map[string]any, error) {
 	}
 
 	// 2. Gate: both sides frozen at the same point must be identical.
-	if *e.plan.Verify.FenceGate {
+	if *e.plan.Verify.FenceGate && e.plan.SourceWriteFence == nil {
 		start := time.Now()
 		results, ok, err := e.verifier.FenceGate(tctx, e.srcDB, e.dstDB)
 		if err != nil {
@@ -311,6 +337,9 @@ func (e *Engine) switchover(ctx context.Context) (map[string]any, error) {
 	lap("fenceGate")
 
 	// 3. Demote source; CNPG publishes a demotion token.
+	if err := e.assertSourceWriteFence(tctx); err != nil {
+		return ev, err
+	}
 	srcS, err := e.src.Get(tctx)
 	if err != nil {
 		return ev, err
@@ -326,7 +355,7 @@ func (e *Engine) switchover(ctx context.Context) (map[string]any, error) {
 		// may still have been applied. When the source still names itself as
 		// primary the request was not applied and CNPG never started demoting:
 		// the rollback can release writes on it without waiting for a token.
-		if s, gerr := e.src.Get(ctx); gerr == nil && s.IsPrimary() && s.DemotionToken == e.tokenBeforeDemote {
+		if s, gerr := e.src.Get(ctx); e.plan.SourceWriteFence == nil && gerr == nil && s.IsPrimary() && s.DemotionToken == e.tokenBeforeDemote {
 			e.setFlags(func(s *State) { s.SourceDemoted = false })
 			ev["demotionApplied"] = false
 		}
@@ -339,6 +368,53 @@ func (e *Engine) switchover(ctx context.Context) (map[string]any, error) {
 		return ev, fmt.Errorf("waiting for demotion token: %w", err)
 	}
 	ev["demotionToken"] = true
+	if e.plan.SourceWriteFence != nil {
+		// HBA admission plus a zero-session snapshot does not observe a backend
+		// still authenticating. CNPG's completed demotion and actual SQL recovery
+		// are the hard barrier. The final WAL marker comes from CNPG's shutdown
+		// checkpoint token, not a potentially stale source replay observation.
+		if err = e.waitRecovery(tctx, e.plan.Source.DSN, &e.srcDB, true); err != nil {
+			return ev, fmt.Errorf("source SQL is not reachable in recovery before target promotion: %w", err)
+		}
+		proof := *e.state.SourceWriteFence
+		finalLSN, ferr := e.writeFencer.ConfirmReadOnlySource(tctx, e.srcDB, proof.Source, demoted.DemotionToken)
+		if ferr != nil {
+			return ev, fmt.Errorf("source final read-only WAL position is not proven: %w", ferr)
+		}
+		if finalLSN == "" {
+			return ev, errors.New("source final read-only WAL position is empty")
+		}
+		proof.FinalFenceLSN = finalLSN
+		proof.SourceReadOnlyConfirmed = true
+		if err = e.persistWriteFence(&proof); err != nil {
+			return ev, err
+		}
+		ev["sourceSqlRecoveryConfirmed"], ev["finalFenceLsn"] = true, finalLSN
+		ev["fenceLsn"] = finalLSN
+		if _, err = e.waitReplayed(tctx, finalLSN); err != nil {
+			return ev, fmt.Errorf("target did not replay final demoted-source LSN: %w", err)
+		}
+		if *e.plan.Verify.FenceGate {
+			results, ok, gerr := e.verifier.FenceGate(tctx, e.srcDB, e.dstDB)
+			if gerr != nil {
+				return ev, fmt.Errorf("post-demotion fence gate: %w", gerr)
+			}
+			ev["fenceGate"] = map[string]any{"tables": results, "ok": ok, "afterSourceDemotion": true}
+			if !ok {
+				return ev, errors.New("post-demotion fence gate data mismatch; leave both roles for operator reconciliation")
+			}
+		}
+		lap("finalReadonlyFence")
+		e.log(StepSwitchover, "source SQL shutdown checkpoint and post-demotion gate confirmed", map[string]any{"finalFenceLsn": finalLSN, "durationMillis": timing["finalReadonlyFence"]})
+		// The source now rejects writes through PostgreSQL recovery. Allow source
+		// fallback reads while the target performs its promotion restart.
+		if err = e.restoreSourceWriteFence(tctx, false); err != nil {
+			return ev, fmt.Errorf("restore read admission on confirmed source replica: %w", err)
+		}
+		lap("restoreSourceReadAdmission")
+		e.log(StepSwitchover, "source read admission restored on confirmed replica", map[string]any{"durationMillis": timing["restoreSourceReadAdmission"]})
+		ev["sourceReadAdmissionRestoredOnReplica"] = true
+	}
 
 	// 4. Promote target. From here on there is no automatic rollback.
 	e.setFlags(func(s *State) { s.PromoteRequested = true })
@@ -495,6 +571,20 @@ func (e *Engine) waitAppStopped(ctx context.Context, timeout time.Duration) erro
 // cutover: route all traffic to the target and release held writes there.
 func (e *Engine) cutover(ctx context.Context) (map[string]any, error) {
 	ev := map[string]any{"backend": e.plan.Gateway.TargetBackend}
+	if e.plan.SourceWriteFence != nil {
+		if err := e.waitRecovery(ctx, e.plan.Source.DSN, &e.srcDB, true); err != nil {
+			return ev, fmt.Errorf("source SQL role before write fence cleanup: %w", err)
+		}
+		if s, err := e.src.Get(ctx); err != nil {
+			return ev, err
+		} else if _, err = e.writeFencer.ConfirmReadOnlySource(ctx, e.srcDB, e.state.SourceWriteFence.Source, s.DemotionToken); err != nil {
+			return ev, err
+		}
+		if err := e.restoreSourceWriteFence(ctx, false); err != nil {
+			return ev, fmt.Errorf("remove source SQL fence only after confirmed demotion: %w", err)
+		}
+		ev["sourceWriteFenceReleasedOnReplica"] = true
+	}
 	if err := e.gw.Route(ctx, e.plan.Gateway.TargetBackend); err != nil {
 		return ev, fmt.Errorf("route to target: %w", err)
 	}

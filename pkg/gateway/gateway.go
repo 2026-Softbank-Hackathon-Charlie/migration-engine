@@ -91,6 +91,63 @@ func (h *HTTP) Totals(ctx context.Context) (map[string]Totals, error) {
 // Totals is not available without a gateway.
 func (None) Totals(context.Context) (map[string]Totals, error) { return nil, ErrNotMeasured }
 
+// SourceFenceReady proves old reads have drained before source DB sessions are
+// terminated. Missing fields from an older gateway are unknown, never zero.
+func (h *HTTP) SourceFenceReady(ctx context.Context, source, target, lease string) (bool, error) {
+	var state struct {
+		WriteBackend *string        `json:"writeBackend"`
+		ReadWeights  map[string]int `json:"readWeights"`
+		WritesHeld   *bool          `json:"writesHeld"`
+		InFlight     *struct {
+			Reads *int `json:"reads"`
+		} `json:"inFlight"`
+		ReadExclusions map[string]string `json:"readExclusions"`
+		ReadInFlight   map[string]*int   `json:"readInFlight"`
+	}
+	if err := h.call(ctx, http.MethodGet, "/v1/state", nil, &state); err != nil {
+		return false, err
+	}
+	if state.WriteBackend == nil || state.WritesHeld == nil || state.InFlight == nil || state.InFlight.Reads == nil || state.ReadWeights == nil {
+		return false, errors.New("gateway does not report the read-drain proof required for SQL fencing")
+	}
+	if state.ReadExclusions[source] != lease || state.ReadInFlight[source] == nil {
+		return false, errors.New("gateway has no owned source-read exclusion and count; weights alone are not a drain proof")
+	}
+	if !*state.WritesHeld || *state.WriteBackend != source {
+		return false, errors.New("gateway source write route or hold changed before SQL fencing")
+	}
+	if state.ReadWeights[target] != 100 || *state.ReadInFlight[source] != 0 {
+		return false, nil
+	}
+	for backend, weight := range state.ReadWeights {
+		if backend != target && weight != 0 {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func (h *HTTP) SourceFenceSupported(ctx context.Context) error {
+	var state struct {
+		Supported *bool `json:"sourceReadExclusionSupported"`
+	}
+	if err := h.call(ctx, http.MethodGet, "/v1/state", nil, &state); err != nil {
+		return err
+	}
+	if state.Supported == nil || !*state.Supported {
+		return errors.New("gateway does not support source read exclusion and drain epochs; SQL fencing is unavailable")
+	}
+	return nil
+}
+
+func (h *HTTP) AcquireSourceReadFence(ctx context.Context, source, lease string) error {
+	return h.do(ctx, http.MethodPost, "/v1/reads/exclude", map[string]string{"backend": source, "lease": lease})
+}
+
+func (h *HTTP) ReleaseSourceReadFence(ctx context.Context, source, lease string) error {
+	return h.do(ctx, http.MethodPost, "/v1/reads/include", map[string]string{"backend": source, "lease": lease})
+}
+
 func (h *HTTP) do(ctx context.Context, method, path string, body any) error {
 	return h.call(ctx, method, path, body, nil)
 }

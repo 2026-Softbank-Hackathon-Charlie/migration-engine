@@ -33,6 +33,19 @@ type DB struct{ Pool *pgxpool.Pool }
 
 // Connect opens a pool and pings it.
 func Connect(ctx context.Context, dsn string) (*DB, error) {
+	return connectWithPeer(ctx, dsn, "")
+}
+
+// ConnectPinned adds the expected TLS peer before opening any connection or
+// sending authentication credentials. Checking a pool only after Ping is late.
+func ConnectPinned(ctx context.Context, dsn, expected string) (*DB, error) {
+	if expected == "" {
+		return nil, errors.New("SQL endpoint fingerprint is required")
+	}
+	return connectWithPeer(ctx, dsn, expected)
+}
+
+func connectWithPeer(ctx context.Context, dsn, expected string) (*DB, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("parse dsn: %w", err)
@@ -44,6 +57,11 @@ func Connect(ctx context.Context, dsn string) (*DB, error) {
 	// Pin these so the same data hashes the same on clusters configured differently.
 	for k, v := range SessionSettings {
 		cfg.ConnConfig.RuntimeParams[k] = v
+	}
+	if expected != "" {
+		if err = pinPoolConfig(cfg, expected); err != nil {
+			return nil, err
+		}
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

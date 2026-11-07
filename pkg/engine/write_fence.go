@@ -33,13 +33,14 @@ type sourceFenceCluster interface {
 }
 
 type sourceHBAFence struct {
-	cluster    sourceFenceCluster
-	target     Cluster
-	targetDB   *pg.DB
-	targetPeer string
-	pg         *pg.WriterFence
-	roles      []string
-	interval   time.Duration
+	cluster         sourceFenceCluster
+	target          Cluster
+	targetDB        *pg.DB
+	targetPeer      string
+	finalCheckpoint string
+	pg              *pg.WriterFence
+	roles           []string
+	interval        time.Duration
 }
 
 func (f *sourceHBAFence) Precheck(ctx context.Context, lease string) (cnpg.HBASnapshot, error) {
@@ -75,6 +76,9 @@ func (f *sourceHBAFence) Precheck(ctx context.Context, lease string) (cnpg.HBASn
 		return snapshot, err
 	}
 	if err = f.pg.VerifySystemIdentifier(ctx, snapshot.SystemIdentifier); err != nil {
+		return snapshot, err
+	}
+	if _, err = f.pg.DB.CheckpointREDOLSN(ctx); err != nil {
 		return snapshot, err
 	}
 	// Cleanup must be observable using this same credential-free writer probe.
@@ -160,14 +164,15 @@ func (f *sourceHBAFence) ConfirmReadOnlySource(ctx context.Context, db Database,
 	if err != nil {
 		return "", err
 	}
-	replayed, err := p.WALPosition(ctx)
+	redo, err := p.CheckpointREDOLSN(ctx)
 	if err != nil {
 		return "", err
 	}
-	diff, err := p.LSNDiff(ctx, replayed, checkpoint)
-	if err != nil || diff < 0 {
-		return "", errors.New("demoted source has not replayed its token shutdown checkpoint")
+	diff, err := p.LSNDiff(ctx, redo, checkpoint)
+	if err != nil || diff < 0 || f.finalCheckpoint == "" && diff != 0 || f.finalCheckpoint != "" && f.finalCheckpoint != checkpoint {
+		return "", errors.New("demoted source control checkpoint does not attest the owned shutdown token")
 	}
+	f.finalCheckpoint = checkpoint
 	return checkpoint, nil
 }
 

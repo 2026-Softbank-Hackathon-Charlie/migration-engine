@@ -35,6 +35,18 @@ func (f *WriterFence) VerifySystemIdentifier(ctx context.Context, expected strin
 	return nil
 }
 
+// CheckpointREDOLSN reads the same control-file checkpoint source used by
+// pg_controldata/CNPG tokens. A source that just restarted from its own clean
+// shutdown checkpoint can legitimately have no pg_last_wal_replay_lsn yet.
+func (d *DB) CheckpointREDOLSN(ctx context.Context) (string, error) {
+	var lsn string
+	err := d.Pool.QueryRow(ctx, `SELECT redo_lsn::text FROM pg_control_checkpoint() WHERE redo_lsn>'0/0'::pg_lsn`).Scan(&lsn)
+	if err != nil {
+		return "", fmt.Errorf("SQL control checkpoint cannot be observed: %w", err)
+	}
+	return lsn, nil
+}
+
 // The check is conservative: uncertain function or membership authority blocks
 // the run. Superusers are a separate administrator trust boundary, not fenced
 // application writers. Unix-socket peer access inside a database Pod is likewise

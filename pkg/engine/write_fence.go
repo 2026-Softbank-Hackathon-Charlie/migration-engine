@@ -147,17 +147,15 @@ func (f *sourceHBAFence) ConfirmReadOnlySource(ctx context.Context, db Database,
 	if err != nil {
 		return "", err
 	}
-	// CNPG can clear status.systemID during demotion. Do not invent an API
-	// value: require the actual SQL identifier on the pinned original endpoint
-	// below, and reject an API identifier whenever it explicitly disagrees.
-	if s.UID != snapshot.UID || s.SystemIdentifier != "" && s.SystemIdentifier != snapshot.SystemIdentifier || s.IsPrimary() || s.Instances != 1 || token == "" || s.DemotionToken != token {
-		return "", fmt.Errorf("demoted source boundary failed: uidMatch=%t systemIdPresent=%t systemIdMatch=%t primary=%t instances=%d tokenPresent=%t tokenMatch=%t", s.UID == snapshot.UID, s.SystemIdentifier != "", s.SystemIdentifier == snapshot.SystemIdentifier, s.IsPrimary(), s.Instances, s.DemotionToken != "", token != "" && s.DemotionToken == token)
-	}
 	f.pg.DB = p
 	if err = p.PinTLSPeer(ctx, snapshot.SQLPeerSHA256); err != nil {
 		return "", err
 	}
-	if err = f.pg.VerifySystemIdentifier(ctx, snapshot.SystemIdentifier); err != nil {
+	sqlSystemID, err := p.SystemIdentifier(ctx)
+	if err != nil {
+		return "", err
+	}
+	if err = assertDemotedSourceIdentity(s, snapshot, token, sqlSystemID); err != nil {
 		return "", err
 	}
 	recovery, err := p.InRecovery(ctx)
@@ -180,6 +178,19 @@ func (f *sourceHBAFence) ConfirmReadOnlySource(ctx context.Context, db Database,
 	}
 	f.finalCheckpoint = checkpoint
 	return checkpoint, nil
+}
+
+func assertDemotedSourceIdentity(s *cnpg.Status, snapshot cnpg.HBASnapshot, token, sqlSystemID string) error {
+	// API status.systemID is optional during role transition. A missing API
+	// observation is acceptable only with a valid direct SQL observation on the
+	// already pinned source endpoint. An explicit API disagreement always halts.
+	if s == nil {
+		return errors.New("demoted source API identity is unavailable")
+	}
+	if s.UID != snapshot.UID || snapshot.UID == "" || !pg.SameSystemIdentifier(sqlSystemID, snapshot.SystemIdentifier) || s.SystemIdentifier != "" && s.SystemIdentifier != snapshot.SystemIdentifier || s.IsPrimary() || s.Instances != 1 || token == "" || s.DemotionToken != token {
+		return fmt.Errorf("demoted source boundary failed: uidMatch=%t apiSystemIdPresent=%t apiSystemIdMatch=%t sqlSystemIdMatch=%t primary=%t instances=%d tokenMatch=%t", s.UID == snapshot.UID, s.SystemIdentifier != "", s.SystemIdentifier == snapshot.SystemIdentifier, pg.SameSystemIdentifier(sqlSystemID, snapshot.SystemIdentifier), s.IsPrimary(), s.Instances, token != "" && s.DemotionToken == token)
+	}
+	return nil
 }
 
 func (f *sourceHBAFence) Restore(ctx context.Context, snapshot cnpg.HBASnapshot, lease string, primary bool) error {

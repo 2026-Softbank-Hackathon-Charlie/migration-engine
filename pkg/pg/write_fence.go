@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,14 +26,32 @@ type WriterFence struct {
 }
 
 func (f *WriterFence) VerifySystemIdentifier(ctx context.Context, expected string) error {
-	var actual string
-	if err := f.DB.Pool.QueryRow(ctx, `SELECT system_identifier::text FROM pg_control_system()`).Scan(&actual); err != nil {
-		return fmt.Errorf("source system identifier cannot be observed: %w", err)
+	actual, err := f.DB.SystemIdentifier(ctx)
+	if err != nil {
+		return err
 	}
-	if expected == "" || actual != expected {
+	if !SameSystemIdentifier(actual, expected) {
 		return errors.New("source PostgreSQL system identifier disagrees with the identified CNPG cluster")
 	}
 	return nil
+}
+
+func (d *DB) SystemIdentifier(ctx context.Context) (string, error) {
+	var actual string
+	if err := d.Pool.QueryRow(ctx, `SELECT system_identifier::text FROM pg_control_system()`).Scan(&actual); err != nil {
+		return "", fmt.Errorf("SQL system identifier cannot be observed: %w", err)
+	}
+	if !SameSystemIdentifier(actual, actual) {
+		return "", errors.New("SQL system identifier is absent, zero or invalid")
+	}
+	return actual, nil
+}
+
+// SameSystemIdentifier compares actual positive PostgreSQL system identifiers;
+// absence, malformed values and zero never count as an identity match.
+func SameSystemIdentifier(actual, expected string) bool {
+	value, err := strconv.ParseUint(actual, 10, 64)
+	return err == nil && value != 0 && actual == expected
 }
 
 // CheckpointREDOLSN reads the same control-file checkpoint source used by

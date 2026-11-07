@@ -269,6 +269,13 @@ func TestSourceHBAWriteFence(t *testing.T) {
 	if err = control.QueryRow(ctx, `SELECT pg_terminate_backend($1,1000)`, fence.pid).Scan(&terminated); err != nil || !terminated {
 		t.Fatalf("observer-loss fixture: stopped=%v err=%v", terminated, err)
 	}
+	if err = fence.Pinned(ctx); err == nil {
+		t.Fatal("lost original observer accepted")
+	}
+	var replacements int
+	if err = control.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity WHERE datname='shop' AND usename='hop_fence_observer'`).Scan(&replacements); err != nil || replacements != 0 {
+		t.Fatalf("observer-loss check opened a replacement connection: count=%d err=%v", replacements, err)
+	}
 	// Force the cached number to match the replacement's PID. Even PID reuse
 	// must not make a fresh connection count as the original observer.
 	for {

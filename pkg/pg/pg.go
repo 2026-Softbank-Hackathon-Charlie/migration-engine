@@ -6,8 +6,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -150,4 +152,189 @@ func Lag(ctx context.Context, source, target *DB) (lag int64, srcLSN, dstLSN str
 		lag = 0
 	}
 	return lag, srcLSN, dstLSN, nil
+}
+
+// External source fence (ADR 0019). These need a superuser connection.
+
+// SourceFacts is what the engine reads from an external source before the
+// fence and again right before the target's promotion.
+type SourceFacts struct {
+	InRecovery bool `json:"inRecovery"`
+	// ReadOnly is default_transaction_read_only in a new session.
+	ReadOnly bool `json:"defaultTransactionReadOnly"`
+	// NextXid is the next transaction id (pg_snapshot_xmax). Read-only work
+	// assigns none, so it moves only if something wrote.
+	NextXid string `json:"nextXid"`
+	// WriteSessions counts other client sessions holding a transaction id: an
+	// open write that could still commit.
+	WriteSessions int `json:"writeSessions"`
+	// ReadOnlyOverrides lists ALTER ROLE/DATABASE ... SET entries of
+	// default_transaction_read_only, which beat the server-wide fence.
+	ReadOnlyOverrides []string `json:"readOnlyOverrides,omitempty"`
+	Superuser         bool     `json:"superuser"`
+	// AllowAlterSystem is allow_alter_system (PostgreSQL 17+; true before).
+	AllowAlterSystem bool `json:"allowAlterSystem"`
+}
+
+// Facts reads SourceFacts.
+func (d *DB) Facts(ctx context.Context) (SourceFacts, error) {
+	var f SourceFacts
+	err := d.Pool.QueryRow(ctx, `SELECT pg_is_in_recovery(),
+		current_setting('default_transaction_read_only')::bool,
+		pg_snapshot_xmax(pg_current_snapshot())::text,
+		(SELECT count(*) FROM pg_stat_activity WHERE backend_type = 'client backend'
+			AND pid <> pg_backend_pid() AND backend_xid IS NOT NULL),
+		coalesce((SELECT array_agg(coalesce(r.rolname, '*') || '@' || coalesce(db.datname, '*') || ': ' || s.c ORDER BY 1)
+			FROM pg_db_role_setting rs
+			CROSS JOIN LATERAL unnest(rs.setconfig) AS s(c)
+			LEFT JOIN pg_roles r ON r.oid = rs.setrole
+			LEFT JOIN pg_database db ON db.oid = rs.setdatabase
+			WHERE s.c ILIKE 'default_transaction_read_only=%'), '{}'),
+		(SELECT rolsuper FROM pg_roles WHERE rolname = current_user),
+		coalesce(current_setting('allow_alter_system', true), 'on')::bool`).Scan(
+		&f.InRecovery, &f.ReadOnly, &f.NextXid, &f.WriteSessions, &f.ReadOnlyOverrides, &f.Superuser, &f.AllowAlterSystem)
+	return f, err
+}
+
+// DefaultReadOnly reports whether default_transaction_read_only is on for
+// new transactions, which is what FenceWrites turns on.
+func (d *DB) DefaultReadOnly(ctx context.Context) (bool, error) {
+	var b bool
+	err := d.Pool.QueryRow(ctx, "SELECT current_setting('default_transaction_read_only')::bool").Scan(&b)
+	return b, err
+}
+
+// Fence is what FenceWrites recorded.
+type Fence struct {
+	// LSN is the WAL insert position after the fence; it is flushed, so a
+	// standby reaches it.
+	LSN string `json:"lsn"`
+	// NextXid is SourceFacts.NextXid right after the fence.
+	NextXid    string `json:"nextXid"`
+	Terminated int64  `json:"terminated"`
+}
+
+// fenceWait bounds how long FenceWrites waits for the reload to reach new
+// sessions and for each ended session to exit.
+const fenceWait = 5 * time.Second
+
+// FenceWrites makes a primary outside CNPG refuse new writes:
+// default_transaction_read_only on for the whole server (ALTER SYSTEM,
+// reload), checked in a new session; then every other client session ends,
+// waiting until each has exited, so no transaction that began read-write is
+// left. The returned LSN is the WAL insert position after that, flushed so
+// commits made with synchronous_commit off are included; the returned xid is
+// the next one to be assigned. Roles are not changed: role changes replicate
+// to the target. The fence does not stop a session that asks for a
+// read-write transaction itself; the caller compares NextXid later.
+func (d *DB) FenceWrites(ctx context.Context) (Fence, error) {
+	var f Fence
+	for _, q := range []string{"ALTER SYSTEM SET default_transaction_read_only = on", "SELECT pg_reload_conf()"} {
+		if _, err := d.Pool.Exec(ctx, q); err != nil {
+			return f, fmt.Errorf("%s: %w", q, err)
+		}
+	}
+	if err := d.waitNewSessionReadOnly(ctx); err != nil {
+		return f, err
+	}
+	// pg_terminate_backend(pid, timeout) waits until the session has exited.
+	// It is false on a timeout and for a session that ended by itself in
+	// between, so the ones it did not confirm are looked up once more.
+	var left []int32
+	if err := d.Pool.QueryRow(ctx, `WITH t AS (SELECT pid, pg_terminate_backend(pid, $1) AS done
+			FROM pg_stat_activity WHERE backend_type = 'client backend' AND pid <> pg_backend_pid())
+		SELECT count(*) FILTER (WHERE done), coalesce(array_agg(pid) FILTER (WHERE NOT done), '{}') FROM t`,
+		fenceWait.Milliseconds()).Scan(&f.Terminated, &left); err != nil {
+		return f, fmt.Errorf("terminate client sessions: %w", err)
+	}
+	if len(left) > 0 {
+		var n int
+		if err := d.Pool.QueryRow(ctx, "SELECT count(*) FROM pg_stat_activity WHERE pid = ANY($1)", left).Scan(&n); err != nil {
+			return f, fmt.Errorf("check ended sessions: %w", err)
+		}
+		if n > 0 {
+			return f, fmt.Errorf("%d client sessions did not exit within %s", n, fenceWait)
+		}
+	}
+	var flushed bool
+	if err := d.Pool.QueryRow(ctx, `SELECT pg_current_wal_insert_lsn()::text,
+		pg_current_wal_flush_lsn() >= pg_current_wal_insert_lsn(),
+		pg_snapshot_xmax(pg_current_snapshot())::text`).Scan(&f.LSN, &flushed, &f.NextXid); err != nil {
+		return f, fmt.Errorf("read fence position: %w", err)
+	}
+	if !flushed {
+		// Only commits flush WAL. A tail that holds no synchronous commit, or
+		// one on a partial page, can stay unflushed, and a standby never
+		// receives unflushed WAL. A segment switch flushes it.
+		if _, err := d.Pool.Exec(ctx, "SELECT pg_switch_wal()"); err != nil {
+			return f, fmt.Errorf("flush WAL: %w", err)
+		}
+	}
+	return f, nil
+}
+
+// waitNewSessionReadOnly polls new sessions until the reload has reached them.
+func (d *DB) waitNewSessionReadOnly(ctx context.Context) error {
+	wctx, cancel := context.WithTimeout(ctx, fenceWait)
+	defer cancel()
+	var last error
+	for {
+		conn, err := pgx.ConnectConfig(wctx, d.Pool.Config().ConnConfig.Copy())
+		if err == nil {
+			var ro bool
+			err = conn.QueryRow(wctx, "SELECT current_setting('default_transaction_read_only')::bool").Scan(&ro)
+			conn.Close(context.Background())
+			if err == nil && ro {
+				return nil
+			}
+		}
+		if err != nil {
+			last = err
+		}
+		select {
+		case <-wctx.Done():
+			return fmt.Errorf("new sessions are not read-only after the reload (last error: %v)", last)
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
+// UnfenceWrites undoes FenceWrites: new transactions are read-write again.
+func (d *DB) UnfenceWrites(ctx context.Context) error {
+	for _, q := range []string{"ALTER SYSTEM RESET default_transaction_read_only", "SELECT pg_reload_conf()"} {
+		if _, err := d.Pool.Exec(ctx, q); err != nil {
+			return fmt.Errorf("%s: %w", q, err)
+		}
+	}
+	return nil
+}
+
+func indexIdent(name string) (string, error) {
+	schema, index, ok := strings.Cut(name, ".")
+	if !ok || schema == "" || index == "" {
+		return "", fmt.Errorf("index %q is not schema.index", name)
+	}
+	return pgx.Identifier{schema, index}.Sanitize(), nil
+}
+
+// IsIndex reports whether "schema.index" names an index (plain or partitioned).
+func (d *DB) IsIndex(ctx context.Context, name string) (bool, error) {
+	ident, err := indexIdent(name)
+	if err != nil {
+		return false, err
+	}
+	var ok bool
+	err = d.Pool.QueryRow(ctx, `SELECT coalesce((SELECT c.relkind IN ('i', 'I') FROM pg_class c
+		WHERE c.oid = to_regclass($1)), false)`, ident).Scan(&ok)
+	return ok, err
+}
+
+// ReindexIndex rebuilds one index, named "schema.index".
+func (d *DB) ReindexIndex(ctx context.Context, name string) error {
+	ident, err := indexIdent(name)
+	if err != nil {
+		return err
+	}
+	_, err = d.Pool.Exec(ctx, "REINDEX INDEX "+ident)
+	return err
 }

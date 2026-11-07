@@ -234,3 +234,37 @@ func TestMissingRowsWithSourceFollowingTarget(t *testing.T) {
 	stop()
 	<-done
 }
+
+// An external source may sort text differently from the target (ADR 0019).
+// The same rows under two collations hash differently with CompareTables and
+// the same with CompareTablesBytewise, also with an integer key.
+func TestCompareTablesBytewiseIgnoresCollation(t *testing.T) {
+	src, dst := pair(t)
+	ctx := context.Background()
+	for db, coll := range map[*pg.DB]string{src: `"C"`, dst: `"und-x-icu"`} {
+		if _, err := db.Pool.Exec(ctx, `CREATE TABLE it.tags (name text COLLATE `+coll+` PRIMARY KEY);
+			INSERT INTO it.tags VALUES ('a'), ('B'), ('b'), ('A'), ('_x'), ('10'), ('9');`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	all := tables(t, src)
+	var tags []verify.Table
+	for _, tb := range all {
+		if tb.Name == "tags" {
+			tags = append(tags, tb)
+		}
+	}
+	if _, ok := verify.CompareTables(ctx, src.Pool, dst.Pool, tags); ok {
+		t.Fatal("collation-ordered hashes agreed; the test data does not exercise the collation")
+	}
+	res, ok := verify.CompareTablesBytewise(ctx, src.Pool, dst.Pool, all)
+	if !ok {
+		t.Fatalf("bytewise comparison of identical data failed: %+v", res)
+	}
+	if _, err := dst.Pool.Exec(ctx, "UPDATE it.tags SET name = 'c' WHERE name = 'b'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := verify.CompareTablesBytewise(ctx, src.Pool, dst.Pool, tags); ok {
+		t.Fatal("difference not detected")
+	}
+}

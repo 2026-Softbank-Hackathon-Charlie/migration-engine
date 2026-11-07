@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Plan describes one migration of a CNPG-backed service from Source to Target.
@@ -33,8 +34,14 @@ type Plan struct {
 	Decommission *DecommissionSpec `json:"decommission,omitempty"`
 }
 
-// Endpoint is one environment (gke / eks / onprem) holding a CNPG Cluster.
+// Endpoint is one environment (gke / eks / onprem) holding a CNPG Cluster,
+// or (source only) a PostgreSQL primary outside CNPG (ADR 0019).
 type Endpoint struct {
+	// Kind (source only): "cnpg" (default) or "external".
+	Kind string `json:"kind,omitempty"`
+	// Name (external source only) is the source's name in the target
+	// Cluster's externalClusters, which the target's replica.primary names.
+	Name string `json:"name,omitempty"`
 	// Env is the environment label, e.g. "gke", "eks", "onprem".
 	Env string `json:"env"`
 	// Kubeconfig path; empty uses the default loading rules ($KUBECONFIG, ~/.kube/config).
@@ -50,7 +57,19 @@ type Endpoint struct {
 	Manifest string `json:"manifest,omitempty"`
 	// App (target only) says when the target app starts (ADR 0012). Omitted means warm.
 	App *AppSpec `json:"app,omitempty"`
+	// Reindex (target only, external source) lists "schema.index" names that
+	// are rebuilt on the promoted target before its app starts (ADR 0019).
+	Reindex []string `json:"reindex,omitempty"`
 }
+
+// Source kinds (ADR 0019).
+const (
+	SourceCNPG     = "cnpg"
+	SourceExternal = "external"
+)
+
+// External reports whether the endpoint is a PostgreSQL primary outside CNPG.
+func (e Endpoint) External() bool { return e.Kind == SourceExternal }
 
 // App start modes (ADR 0012).
 const (
@@ -259,6 +278,12 @@ func (p *Plan) Validate() error {
 		if e.Env == "" {
 			errs = append(errs, fmt.Errorf("%s.env is required", role))
 		}
+		if e.External() {
+			if e.DSN == "" {
+				errs = append(errs, fmt.Errorf("%s.dsn is required", role))
+			}
+			continue
+		}
 		if e.Namespace == "" {
 			errs = append(errs, fmt.Errorf("%s.namespace is required", role))
 		}
@@ -302,7 +327,64 @@ func (p *Plan) Validate() error {
 	if a := p.Target.App; a != nil {
 		errs = append(errs, a.validate(p)...)
 	}
+	errs = append(errs, p.validateKinds()...)
 	return errors.Join(errs...)
+}
+
+// validateKinds checks source.kind and what an external source needs (ADR 0019).
+func (p *Plan) validateKinds() []error {
+	var errs []error
+	s := p.Source
+	switch s.Kind {
+	case "", SourceCNPG:
+		if s.Name != "" {
+			errs = append(errs, errors.New("source.name is only for source.kind external"))
+		}
+		if len(p.Target.Reindex) > 0 {
+			errs = append(errs, errors.New("target.reindex is only for source.kind external"))
+		}
+	case SourceExternal:
+		if strings.TrimSpace(s.Name) == "" {
+			errs = append(errs, errors.New("source.name is required for source.kind external (the target's externalClusters name of the source)"))
+		}
+		if s.Kubeconfig != "" || s.Context != "" || s.Namespace != "" || s.Cluster != "" {
+			errs = append(errs, errors.New("source.kubeconfig, context, namespace and cluster are not used by source.kind external"))
+		}
+		// Not even an app's start-up schema change can run on the target before
+		// it is promoted, and the frozen source cannot take one either.
+		if !p.Target.App.Cold() {
+			errs = append(errs, errors.New("source.kind external requires target.app.mode cold"))
+		}
+		if p.Decommission != nil {
+			errs = append(errs, errors.New("decommission is not supported for source.kind external"))
+		}
+		if p.AllowSourceRewire {
+			errs = append(errs, errors.New("allowSourceRewire is not supported for source.kind external"))
+		}
+		// The source no longer follows the target, so the fence gate is the
+		// only database comparison (verify skips it).
+		if fg := p.Verify.FenceGate; fg != nil && !*fg {
+			errs = append(errs, errors.New("source.kind external requires verify.fenceGate"))
+		}
+		for i, ix := range p.Target.Reindex {
+			parts := strings.Split(ix, ".")
+			if len(parts) != 2 || parts[0] == "" || parts[1] == "" || strings.IndexFunc(ix, unicode.IsSpace) >= 0 {
+				errs = append(errs, fmt.Errorf("target.reindex[%d] must be \"schema.index\", got %q", i, ix))
+			}
+		}
+	default:
+		errs = append(errs, fmt.Errorf("source.kind must be %q or %q, got %q", SourceCNPG, SourceExternal, s.Kind))
+	}
+	if p.Target.Kind != "" && p.Target.Kind != SourceCNPG {
+		errs = append(errs, fmt.Errorf("target.kind must be %q, got %q", SourceCNPG, p.Target.Kind))
+	}
+	if p.Target.Name != "" {
+		errs = append(errs, errors.New("target.name is not supported (external source only)"))
+	}
+	if len(p.Source.Reindex) > 0 {
+		errs = append(errs, errors.New("source.reindex is not supported (target only)"))
+	}
+	return errs
 }
 
 func (a *AppSpec) validate(p *Plan) []error {

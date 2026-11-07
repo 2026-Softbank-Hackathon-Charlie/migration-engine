@@ -36,3 +36,17 @@ func TestReadWritten(t *testing.T) {
 		t.Fatal("expected error for missing pk")
 	}
 }
+
+func TestBytewiseHashQuery(t *testing.T) {
+	comp := Table{Schema: "public", Name: "order_items", PK: []string{"order_id", "sku"}}
+	if q := hashQueryBytewise(comp); !strings.Contains(q, `ORDER BY t."order_id"::text COLLATE "C", t."sku"::text COLLATE "C"`) {
+		t.Errorf("hashQueryBytewise = %s", q)
+	}
+	if q := hashQueryBytewise(Table{Schema: "public", Name: "log"}); !strings.Contains(q, `ORDER BY t::text COLLATE "C"`) {
+		t.Errorf("hashQueryBytewise no pk = %s", q)
+	}
+	// The CNPG path's query is unchanged.
+	if q := hashQuery(comp); strings.Contains(q, "COLLATE") {
+		t.Errorf("hashQuery = %s", q)
+	}
+}

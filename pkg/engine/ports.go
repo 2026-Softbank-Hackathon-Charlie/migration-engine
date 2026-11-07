@@ -42,6 +42,9 @@ type Database interface {
 	PostmasterStart(ctx context.Context) (time.Time, error)
 	WALPosition(ctx context.Context) (string, error)
 	LSNDiff(ctx context.Context, a, b string) (int64, error)
+	// IsIndex and ReindexIndex take a "schema.index" (external sources, ADR 0019).
+	IsIndex(ctx context.Context, name string) (bool, error)
+	ReindexIndex(ctx context.Context, name string) error
 	Close()
 }
 
@@ -52,6 +55,20 @@ type Database interface {
 type settleObserver interface {
 	SettleStatus(context.Context) (inRecovery, pendingRestart bool, postmasterStart time.Time, err error)
 }
+
+// ExternalSource is a PostgreSQL primary outside CNPG, reached with a
+// superuser DSN (ADR 0019; pgExternal).
+type ExternalSource interface {
+	Status(ctx context.Context) (ExternalStatus, error)
+	// Fence makes the server refuse new writes, ends every other client
+	// session and returns the WAL position and next xid after that.
+	Fence(ctx context.Context) (pg.Fence, error)
+	// Unfence makes it take writes again.
+	Unfence(ctx context.Context) error
+}
+
+// ExternalStatus is what the engine reads from an external source.
+type ExternalStatus = pg.SourceFacts
 
 // Connector opens a Database for a DSN.
 type Connector func(ctx context.Context, dsn string) (Database, error)
@@ -117,6 +134,37 @@ func (p httpProber) Probe(ctx context.Context, method, url string) (int, error) 
 	return resp.StatusCode, nil
 }
 
+// pgExternal opens a short connection for every call, so a dropped link
+// costs one call, not the rest of the run.
+type pgExternal struct{ dsn string }
+
+func (x pgExternal) Status(ctx context.Context) (ExternalStatus, error) {
+	db, err := pg.Connect(ctx, x.dsn)
+	if err != nil {
+		return ExternalStatus{}, err
+	}
+	defer db.Close()
+	return db.Facts(ctx)
+}
+
+func (x pgExternal) Fence(ctx context.Context) (pg.Fence, error) {
+	db, err := pg.Connect(ctx, x.dsn)
+	if err != nil {
+		return pg.Fence{}, err
+	}
+	defer db.Close()
+	return db.FenceWrites(ctx)
+}
+
+func (x pgExternal) Unfence(ctx context.Context) error {
+	db, err := pg.Connect(ctx, x.dsn)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	return db.UnfenceWrites(ctx)
+}
+
 func connectPG(ctx context.Context, dsn string) (Database, error) {
 	db, err := pg.Connect(ctx, dsn)
 	if err != nil {
@@ -155,11 +203,23 @@ func (v sqlVerifier) FenceGate(ctx context.Context, src, dst Database) ([]verify
 	if err != nil {
 		return nil, false, fmt.Errorf("list tables: %w", err)
 	}
-	res, ok := verify.CompareTables(ctx, s.Pool, d.Pool, tables)
+	compare := verify.CompareTables
+	if v.plan.Source.External() {
+		compare = verify.CompareTablesBytewise
+	}
+	res, ok := compare(ctx, s.Pool, d.Pool, tables)
 	return res, ok, nil
 }
 
 func (v sqlVerifier) Report(ctx context.Context, src, dst Database) (*Report, error) {
+	if v.plan.Source.External() {
+		// Only the target is read (verifyExternal).
+		d, ok := dst.(*pg.DB)
+		if !ok {
+			return nil, errors.New("sql verifier requires *pg.DB connections")
+		}
+		return verifyWithOptions(ctx, v.plan, nil, d, v.rc, v.options)
+	}
 	s, d, err := pools(src, dst)
 	if err != nil {
 		return nil, err

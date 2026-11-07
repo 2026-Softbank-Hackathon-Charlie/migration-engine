@@ -45,8 +45,9 @@ func (e *Engine) guardedStep(ctx context.Context, name string) (map[string]any, 
 	case StepVerify:
 		guard = e.targetLoad
 	}
+	step := e.stepFunc(name)
 	if guard == nil {
-		return stepFuncs[name](e, ctx)
+		return step(e, ctx)
 	}
 	var evidence map[string]any
 	var err error
@@ -66,12 +67,12 @@ func (e *Engine) guardedStep(ctx context.Context, name string) (map[string]any, 
 		}
 		cancel()
 		if err == nil {
-			evidence, err = stepFuncs[name](e, ctx)
+			evidence, err = step(e, ctx)
 		}
 	} else {
 		err = guard.Do(ctx, func(work context.Context) error {
 			var stepErr error
-			evidence, stepErr = stepFuncs[name](e, work)
+			evidence, stepErr = step(e, work)
 			return stepErr
 		})
 	}

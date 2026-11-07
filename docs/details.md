@@ -133,6 +133,23 @@ Plan에 추가하는 부분:
 - 엔진 계정은 대상 네임스페이스의 Deployment/StatefulSet `get`·`patch`와 Pod `list`가 필요합니다.
 - 원본과 대상 앱 버전을 같게 둡니다. 원복하면 대상 앱이 기동 때 남긴 스키마 기록이 원본으로 복제됩니다.
 
+### B2. CNPG가 아닌 원본 (`source.kind: external`, ADR 0019)
+VM의 compose처럼 CNPG 밖에서 돌던 PostgreSQL을 원본으로 둡니다. 대상 Cluster는 그 원본에서 `pg_basebackup`으로 태어나 `externalClusters`의 `name` 항목으로 streaming 중이어야 합니다(`replica.primary`와 `replica.source`가 `name`).
+
+```json
+"source": {"kind": "external", "name": "legacy", "env": "legacy",
+           "dsn": "postgres://app:${LEGACY_PG_PASSWORD}@db-legacy-shop:5432/app"},
+"target": {"...": "...", "reindex": ["public.items_name_idx"],
+           "app": {"mode": "cold", "...": "..."}}
+```
+
+- `dsn`은 superuser 계정이어야 합니다(`ALTER SYSTEM`, 다른 세션 종료). `namespace`, `cluster`, `kubeconfig`, `context`는 쓰지 않습니다.
+- `target.app.mode: cold`와 `verify.fenceGate`가 필수이고, `decommission`은 받지 않습니다.
+- 원본에 `ALTER ROLE/DATABASE ... SET default_transaction_read_only`가 있으면 precheck가 멈춥니다. `allow_alter_system`이 on이어야 합니다.
+- fence는 원본에 `default_transaction_read_only = on`을 걸고 자기 세션을 뺀 모든 client 세션을 끊습니다. 승격 직전에 원본의 다음 xid가 fence 때와 같은지 다시 봅니다. 승격 전 실패는 fence를 되돌리고 원본으로 쓰기를 풀며, 승격 뒤 실패는 원복하지 않고 halt합니다. 승격 전에 멈춘 run은 `-resume-halted`가 원복을 마칩니다.
+- `gateway.sourceBackend`는 게이트웨이에 실제로 있는 백엔드 이름이어야 합니다. 엔진은 확인하지 못합니다.
+- `target.reindex`의 인덱스는 승격하고 안정된 대상에서 앱을 띄우기 전에 차례로 `REINDEX INDEX`합니다.
+
 ### C. 게이트웨이 HTTP 계약 (`pkg/gateway`, 아직 제안 단계)
 | 요청 | 의미 |
 | --- | --- |

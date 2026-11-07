@@ -92,6 +92,8 @@ type Options struct {
 	// App and Prober serve a cold plan's target app (ADR 0012).
 	App    App
 	Prober Prober
+	// External replaces the adapter of a source.kind external plan (ADR 0019).
+	External ExternalSource
 	// PollInterval is the base polling period (default 2s). Shorter waits scale from it.
 	PollInterval time.Duration
 }
@@ -105,7 +107,8 @@ type Engine struct {
 	emitFn                 func(Event)
 	mu                     sync.Mutex
 
-	src, dst     Cluster
+	src, dst     Cluster        // src is nil for an external source
+	ext          ExternalSource // nil unless the source is external (ADR 0019)
 	srcDB, dstDB Database
 	connect      Connector
 	gw           gateway.Gateway
@@ -139,7 +142,12 @@ func New(p *plan.Plan, opt Options) (*Engine, error) {
 
 	// Adapters first, so a bad kubeconfig does not leave an orphan state file.
 	e.src, e.dst = opt.SourceCluster, opt.TargetCluster
-	if e.src == nil {
+	if p.Source.External() {
+		e.src, e.ext = nil, opt.External
+		if e.ext == nil {
+			e.ext = pgExternal{dsn: p.Source.DSN}
+		}
+	} else if e.src == nil {
 		dyn, err := kube.Dynamic(p.Source.Kubeconfig, p.Source.Context)
 		if err != nil {
 			return nil, fmt.Errorf("source: %w", err)
@@ -309,6 +317,9 @@ func (e *Engine) ResumeHalted(ctx context.Context) error {
 	if st.Outcome != OutcomeHalted {
 		return fmt.Errorf("run %s is %s, not halted", st.RunID, st.Outcome)
 	}
+	if e.plan.Source.External() {
+		return e.resumeHaltedExternal(ctx, st)
+	}
 	for _, step := range []string{StepFence, StepStartTarget, StepCutover} {
 		if st.Steps[step].Status == StatusRunning {
 			return fmt.Errorf("interrupted %s requires operator reconciliation; refusing automatic resume", step)
@@ -346,7 +357,13 @@ func (e *Engine) ResumeHalted(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("target did not settle: %w", err)
 	}
+	e.markResumed(st, ev, "resumed after halt: target is primary and settled, source follows it")
+	return nil
+}
 
+// markResumed records a confirmed resume: the switchover counts as done and
+// the run carries on.
+func (e *Engine) markResumed(st State, ev map[string]any, msg string) {
 	now := time.Now().UTC()
 	e.mu.Lock()
 	if rec := e.state.Steps[StepSwitchover]; rec.Status != StatusSucceeded {
@@ -358,8 +375,7 @@ func (e *Engine) ResumeHalted(ctx context.Context) error {
 	e.state.FailureStep, e.state.FailureError = "", ""
 	e.mu.Unlock()
 	e.save()
-	e.log(st.FailureStep, "resumed after halt: target is primary and settled, source follows it", map[string]any{"haltedAt": st.FailureStep})
-	return nil
+	e.log(st.FailureStep, msg, map[string]any{"haltedAt": st.FailureStep})
 }
 
 func (e *Engine) checkRunnable() error {
@@ -406,6 +422,17 @@ var stepFuncs = map[string]stepFunc{
 	StepCutover:     (*Engine).cutover,
 	StepVerify:      (*Engine).verify,
 	StepFinalize:    (*Engine).finalize,
+}
+
+// stepFunc is the function of a step for this plan: an external source
+// replaces some steps (ADR 0019), the others are shared.
+func (e *Engine) stepFunc(name string) stepFunc {
+	if e.plan.Source.External() {
+		if f, ok := externalStepFuncs[name]; ok {
+			return f
+		}
+	}
+	return stepFuncs[name]
 }
 
 // skipReason says why a step has nothing to do for this plan ("" = run it).
@@ -459,6 +486,9 @@ func (e *Engine) onFailure(step string, cause error) error {
 	e.mu.Lock()
 	e.state.FailureStep, e.state.FailureError = step, cause.Error()
 	e.mu.Unlock()
+	if e.plan.Source.External() {
+		return e.onExternalFailure(step, cause)
+	}
 
 	// A fresh context: the caller's may already be cancelled (e.g. Ctrl-C).
 	budget := 2*e.plan.Thresholds.SwitchoverTimeout.Duration + demotionGrace + rollbackSlack
@@ -537,6 +567,9 @@ var rollbackSlack = time.Minute
 // rollback restores the source as primary and releases held writes to it.
 // Only valid while the target has not been asked to promote.
 func (e *Engine) rollback(ctx context.Context) error {
+	if e.plan.Source.External() {
+		return errNoDemotionRollback
+	}
 	if e.state.SourceDemoted {
 		// CNPG demotes by fencing and stopping the instances, publishing a token
 		// and restarting them as replicas. A promotion requested before that ends
@@ -612,6 +645,9 @@ func (e *Engine) canRevertPromotion(step string) bool {
 // demotion token, check the target follows the source again, and release the
 // held writes to the source. Any failure leaves the rest to an operator.
 func (e *Engine) rollbackPromoted(ctx context.Context) error {
+	if e.plan.Source.External() {
+		return errNoDemotionRollback
+	}
 	const step = StepStartTarget
 	a := e.plan.Target.App
 

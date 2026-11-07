@@ -120,6 +120,11 @@ func cmdValidate(args []string) error {
 	if c.json {
 		return printJSON(p)
 	}
+	if p.Source.External() {
+		fmt.Printf("plan %q OK: external %s (%s) → %s/%s (%s)\n", p.ID,
+			p.Source.Name, p.Source.Env, p.Target.Namespace, p.Target.Cluster, p.Target.Env)
+		return nil
+	}
 	fmt.Printf("plan %q OK: %s/%s (%s) → %s/%s (%s)\n", p.ID,
 		p.Source.Namespace, p.Source.Cluster, p.Source.Env,
 		p.Target.Namespace, p.Target.Cluster, p.Target.Env)
@@ -135,6 +140,10 @@ func cmdStatus(ctx context.Context, args []string) error {
 	}
 	out := map[string]any{}
 	for role, ep := range map[string]plan.Endpoint{"source": p.Source, "target": p.Target} {
+		if ep.External() {
+			out[role] = map[string]string{"kind": plan.SourceExternal, "name": ep.Name}
+			continue
+		}
 		dyn, err := kube.Dynamic(ep.Kubeconfig, ep.Context)
 		if err != nil {
 			out[role] = map[string]string{"error": err.Error()}

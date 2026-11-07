@@ -82,10 +82,23 @@ type TableResult struct {
 
 // CompareTables computes count + ordered row hash on both sides, in parallel per table.
 func CompareTables(ctx context.Context, src, dst *pgxpool.Pool, tables []Table) ([]TableResult, bool) {
+	return compareTables(ctx, src, dst, tables, hashQuery)
+}
+
+// CompareTablesBytewise is CompareTables with the rows ordered by the bytes
+// of their text, not by each side's collation (ADR 0019). An external source
+// may sort text by a different C library than the target, and a text index
+// the target copied from it can be corrupt until it is rebuilt; neither must
+// change the hash of identical data.
+func CompareTablesBytewise(ctx context.Context, src, dst *pgxpool.Pool, tables []Table) ([]TableResult, bool) {
+	return compareTables(ctx, src, dst, tables, hashQueryBytewise)
+}
+
+func compareTables(ctx context.Context, src, dst *pgxpool.Pool, tables []Table, hash func(Table) string) ([]TableResult, bool) {
 	all := true
 	out := make([]TableResult, 0, len(tables))
 	for _, t := range tables {
-		q := hashQuery(t)
+		q := hash(t)
 		r := TableResult{Table: t.String()}
 		var wg sync.WaitGroup
 		var se, de error
@@ -115,6 +128,23 @@ func hashQuery(t Table) string {
 		cols := make([]string, len(t.PK))
 		for i, c := range t.PK {
 			cols[i] = "t." + pgx.Identifier{c}.Sanitize()
+		}
+		order = strings.Join(cols, ", ")
+	}
+	return fmt.Sprintf(`SELECT count(*), coalesce(md5(string_agg(md5(t::text), '' ORDER BY %s)), '') FROM %s AS t`, order, t.Ident())
+}
+
+// hashQueryBytewise orders by each key's text under COLLATE "C". The cast
+// makes it valid for every type (COLLATE on an integer is an error), and the
+// session settings (pg.SessionSettings) make the text the same on both sides.
+// The order differs from hashQuery's, so the hashes do too; only the two sides
+// of one comparison have to agree.
+func hashQueryBytewise(t Table) string {
+	order := `t::text COLLATE "C"`
+	if len(t.PK) > 0 {
+		cols := make([]string, len(t.PK))
+		for i, c := range t.PK {
+			cols[i] = "t." + pgx.Identifier{c}.Sanitize() + `::text COLLATE "C"`
 		}
 		order = strings.Join(cols, ", ")
 	}

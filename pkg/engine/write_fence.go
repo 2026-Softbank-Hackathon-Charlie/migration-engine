@@ -59,6 +59,12 @@ func (f *sourceHBAFence) Precheck(ctx context.Context, lease string) (cnpg.HBASn
 	if err = f.pg.VerifySystemIdentifier(ctx, snapshot.SystemIdentifier); err != nil {
 		return snapshot, err
 	}
+	// Cleanup must be observable using this same credential-free writer probe.
+	// Certificate/LDAP/custom admission that cannot be attested is unsupported,
+	// rather than discovered only after writes have been held.
+	if err = f.pg.Admitted(ctx); err != nil {
+		return snapshot, fmt.Errorf("baseline writer admission cannot be attested: %w", err)
+	}
 	target, err := f.target.Get(ctx)
 	if err != nil {
 		return snapshot, fmt.Errorf("source write fence requires an existing warm target: %w", err)

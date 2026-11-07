@@ -88,12 +88,10 @@ if [ "${SOURCE_WRITE_FENCE_REHEARSAL:-}" = 1 ]; then
     CREATE ROLE hop_observer LOGIN PASSWORD 'fixture-observer';
     GRANT pg_read_all_stats, pg_signal_backend TO hop_observer;
     GRANT SELECT ON ALL TABLES IN SCHEMA public TO hop_observer;
-    GRANT EXECUTE ON FUNCTION pg_control_system() TO hop_observer;
-    GRANT SET ON PARAMETER post_auth_delay TO app;"
+    GRANT EXECUTE ON FUNCTION pg_control_system() TO hop_observer;"
   kc exec pg-src-1 -c postgres -- psql -q -d app -v ON_ERROR_STOP=1 -c "GRANT EXECUTE ON FUNCTION pg_control_checkpoint() TO hop_observer;"
-  # Only the late client's startup packet requests PostAuthDelay (PG17
-  # postinit.c/guc.c). Grant its explicit parameter SET permission while keeping
-  # normal app/operator/replication readiness unchanged.
+  # The Go fixture gates real SCRAM responses at the client; no server-wide or
+  # role startup delay and no extra app parameter authority are required.
 fi
 
 # copy <from-kubeconfig> <to-kubeconfig> <secret> [key]: copy a Secret (only

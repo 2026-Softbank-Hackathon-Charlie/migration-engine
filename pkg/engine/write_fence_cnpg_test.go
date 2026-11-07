@@ -39,6 +39,54 @@ func (v *fixtureAdmissionTrace) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+type fixtureStartupWriter struct {
+	ctx               context.Context
+	writer            io.Writer
+	selected, release <-chan struct{}
+}
+
+func (v fixtureStartupWriter) Write(p []byte) (int, error) {
+	select {
+	case <-v.selected:
+		select {
+		case <-v.release:
+		case <-v.ctx.Done():
+			return 0, v.ctx.Err()
+		}
+	default:
+	}
+	return v.writer.Write(p)
+}
+
+type fixtureStartupClient struct {
+	selected, release chan struct{}
+	result            chan error
+}
+
+func startFixtureStartupClient(ctx context.Context, dsn, note string) *fixtureStartupClient {
+	c := &fixtureStartupClient{selected: make(chan struct{}), release: make(chan struct{}), result: make(chan error, 1)}
+	go func() {
+		config, e := pgx.ParseConfig(dsn)
+		if e != nil {
+			c.result <- e
+			return
+		}
+		trace := &fixtureAdmissionTrace{ready: c.selected}
+		config.BuildFrontend = func(r io.Reader, w io.Writer) *pgproto3.Frontend {
+			frontend := pgproto3.NewFrontend(r, fixtureStartupWriter{ctx: ctx, writer: w, selected: c.selected, release: c.release})
+			frontend.Trace(trace, pgproto3.TracerOptions{SuppressTimestamps: true})
+			return frontend
+		}
+		conn, e := pgx.ConnectConfig(ctx, config)
+		if e == nil {
+			_, e = conn.Exec(ctx, `INSERT INTO orders(total,note) VALUES (2,$1)`, note)
+			_ = conn.Close(context.Background())
+		}
+		c.result <- e
+	}()
+	return c
+}
+
 // This fixture exercises real CNPG controllers in two disposable kind clusters.
 // The HTTP server is only a control-plane contract fixture, not a traffic proxy;
 // actual gateway retry/drain behavior is tested in the platform companion PR.
@@ -71,8 +119,7 @@ func TestSourceWriteFenceCNPGShutdownCheckpoint(t *testing.T) {
 	if _, err = tx.Exec(ctx, `INSERT INTO orders(total,note) VALUES (1,'fence-open-transaction')`); err != nil {
 		t.Fatal(err)
 	}
-	lateResult := make(chan error, 1)
-	authenticated := make(chan struct{})
+	var startupClients []*fixtureStartupClient
 	var mu sync.Mutex
 	held, excluded := false, ""
 	backend := "src"
@@ -87,33 +134,14 @@ func TestSourceWriteFenceCNPGShutdownCheckpoint(t *testing.T) {
 		case "/v1/writes/hold":
 			held = true
 			once.Do(func() {
-				go func() {
-					// This client's post_auth_delay=10 makes an authenticating backend
-					// invisible to the earlier pg_stat_activity session snapshot.
-					config, e := pgx.ParseConfig(writerDSN)
-					if e != nil {
-						lateResult <- e
+				startupClients = []*fixtureStartupClient{startFixtureStartupClient(ctx, writerDSN, "fence-late-authentication"), startFixtureStartupClient(ctx, writerDSN, "fence-after-demotion")}
+				for _, client := range startupClients {
+					select {
+					case <-client.selected:
+					case <-time.After(2 * time.Second):
+						http.Error(w, "client never passed original HBA selection", 503)
 						return
 					}
-					config.RuntimeParams["options"] = "-c post_auth_delay=10"
-					trace := &fixtureAdmissionTrace{ready: authenticated}
-					config.BuildFrontend = func(r io.Reader, w io.Writer) *pgproto3.Frontend {
-						frontend := pgproto3.NewFrontend(r, w)
-						frontend.Trace(trace, pgproto3.TracerOptions{SuppressTimestamps: true})
-						return frontend
-					}
-					c, e := pgx.ConnectConfig(ctx, config)
-					if e == nil {
-						_, e = c.Exec(ctx, `INSERT INTO orders(total,note) VALUES (2,'fence-late-authentication')`)
-						_ = c.Close(context.Background())
-					}
-					lateResult <- e
-				}()
-				select {
-				case <-authenticated:
-				case <-time.After(2 * time.Second):
-					http.Error(w, "late client never passed original HBA selection before fencing", 503)
-					return
 				}
 				observer, e := pgx.Connect(ctx, observerDSN)
 				if e != nil {
@@ -127,7 +155,7 @@ func TestSourceWriteFenceCNPGShutdownCheckpoint(t *testing.T) {
 					http.Error(w, "startup client was not hidden from the source-drain snapshot", 503)
 					return
 				}
-				t.Log("late SQL client passed original HBA selection but is absent from the source writer snapshot")
+				t.Log("two SQL clients passed original HBA selection but are absent from the source writer snapshot")
 			})
 		case "/v1/reads/exclude", "/v1/reads/include":
 			var body struct{ Backend, Lease string }
@@ -181,15 +209,21 @@ func TestSourceWriteFenceCNPGShutdownCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer e.Close()
+	var lateCommitLSN string
 	for _, step := range Steps {
 		if err = e.RunStep(ctx, step); err != nil {
 			t.Fatalf("real CNPG step %s: %v; state=%+v", step, err, e.State())
 		}
 		if step == StepFence {
-			select {
-			case lateErr := <-lateResult:
-				t.Fatalf("startup client finished before the provisional marker; race was not reproduced: %v", lateErr)
-			default:
+			mu.Lock()
+			clients := append([]*fixtureStartupClient(nil), startupClients...)
+			mu.Unlock()
+			for _, client := range clients {
+				select {
+				case lateErr := <-client.result:
+					t.Fatalf("client passed the authentication barrier early: %v", lateErr)
+				default:
+				}
 			}
 			if err = tx.Commit(ctx); err == nil {
 				t.Fatal("direct SQL transaction committed through source admission/drain")
@@ -204,34 +238,63 @@ func TestSourceWriteFenceCNPGShutdownCheckpoint(t *testing.T) {
 				t.Fatalf("target read n=%d uncommitted=%d err=%v", n, uncommitted, e)
 			}
 			_ = reader.Close(ctx)
+			// Release one real old-HBA connection AFTER the provisional marker.
+			// It must actually commit; the final shutdown marker must include it.
+			close(clients[0].release)
+			select {
+			case lateErr := <-clients[0].result:
+				if lateErr != nil {
+					t.Fatalf("old-HBA race client did not commit: %v", lateErr)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("old-HBA client did not finish after authentication release")
+			}
+			lateCommitLSN, err = e.srcDB.WALPosition(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff, e := e.srcDB.LSNDiff(ctx, lateCommitLSN, e.State().FenceLSN); e != nil || diff <= 0 {
+				t.Fatalf("race commit did not exceed provisional marker: diff=%d err=%v", diff, e)
+			}
+			t.Log("a real old-HBA client committed beyond the provisional source marker")
+		}
+		if step == StepSwitchover {
+			mu.Lock()
+			pending := startupClients[1]
+			mu.Unlock()
+			close(pending.release)
+			select {
+			case lateErr := <-pending.result:
+				if lateErr == nil {
+					t.Fatal("old startup backend survived source demotion and wrote")
+				}
+				var pgError *pgconn.PgError
+				if errors.As(lateErr, &pgError) && pgError.Code != "57P01" && pgError.Code != "57P02" && pgError.Code != "57P03" && pgError.Code != "25006" {
+					t.Fatalf("pending startup client failed for unrelated SQL error: %v", lateErr)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("old startup backend was not conclusively terminated after demotion")
+			}
 		}
 	}
 	proof := e.State().SourceWriteFence
 	if proof == nil || proof.FinalFenceLSN == "" || !proof.Released {
 		t.Fatalf("final checkpoint/read admission proof missing: %+v", proof)
 	}
-	select {
-	case lateErr := <-lateResult:
-		var pgError *pgconn.PgError
-		if errors.As(lateErr, &pgError) && pgError.Code != "57P01" && pgError.Code != "57P02" && pgError.Code != "57P03" && pgError.Code != "25006" {
-			t.Fatalf("late startup fixture failed for an unrelated SQL error: %v", lateErr)
-		}
-		// Either the shutdown terminated this startup backend, or its commit
-		// preceded shutdown and MUST be included in the final target contents.
-		target, e := pgx.Connect(ctx, targetDSN)
-		if e != nil {
-			t.Fatal(e)
-		}
-		defer target.Close(context.Background())
-		var n int
-		if e = target.QueryRow(ctx, `SELECT count(*) FROM orders WHERE note='fence-late-authentication'`).Scan(&n); e != nil {
-			t.Fatal(e)
-		}
-		if lateErr == nil && n != 1 {
-			t.Fatal("successful late-authentication write missing beyond shutdown-checkpoint fence")
-		}
-		t.Logf("real CNPG final checkpoint=%s late-client-committed=%v target-late-rows=%d", proof.FinalFenceLSN, lateErr == nil, n)
-	case <-ctx.Done():
-		t.Fatal("late authentication fixture did not finish")
+	if diff, err := e.dstDB.LSNDiff(ctx, proof.FinalFenceLSN, lateCommitLSN); err != nil || diff < 0 {
+		t.Fatalf("shutdown marker omitted the real late commit: diff=%d err=%v", diff, err)
 	}
+	target, err := pgx.Connect(ctx, targetDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close(context.Background())
+	var committed, afterDemotion int
+	if err = target.QueryRow(ctx, `SELECT count(*) FILTER (WHERE note='fence-late-authentication'),count(*) FILTER (WHERE note='fence-after-demotion') FROM orders`).Scan(&committed, &afterDemotion); err != nil {
+		t.Fatal(err)
+	}
+	if committed != 1 || afterDemotion != 0 {
+		t.Fatalf("startup race accounting failed: committed=%d afterDemotion=%d", committed, afterDemotion)
+	}
+	t.Logf("real CNPG checkpoint=%s lateCommitLSN=%s targetLateRows=%d oldStartupBackendTerminated=true", proof.FinalFenceLSN, lateCommitLSN, committed)
 }

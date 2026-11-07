@@ -45,6 +45,14 @@ type Database interface {
 	Close()
 }
 
+// settleObserver is an optional extension implemented by the PostgreSQL adapter.
+// Existing Database adapters keep the three-query observation path. An error
+// from the combined read remains unobserved; it must not fall back to another
+// read and turn an incomplete observation into apparent stability.
+type settleObserver interface {
+	SettleStatus(context.Context) (inRecovery, pendingRestart bool, postmasterStart time.Time, err error)
+}
+
 // Connector opens a Database for a DSN.
 type Connector func(ctx context.Context, dsn string) (Database, error)
 

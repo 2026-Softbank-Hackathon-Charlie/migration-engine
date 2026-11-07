@@ -681,12 +681,40 @@ type SettleReport struct {
 	// LastBlockedMillis is when, after the wait began, a poll last saw one of
 	// the three; the rest of the wait is the settleMin floor and the polls.
 	LastBlockedMillis int64 `json:"lastBlockedMillis"`
+	// Observation times accumulate all successful and failed samples without
+	// rounding each poll. They exclude the poll sleep and are final evidence,
+	// not a live timer or the duration of CNPG's restart itself.
+	ObservationMillis  int64 `json:"observationMillis"`
+	ClusterReadMillis  int64 `json:"clusterReadMillis"`
+	ConnectMillis      int64 `json:"connectMillis"`
+	DatabaseReadMillis int64 `json:"databaseReadMillis"`
+	CloseMillis        int64 `json:"closeMillis"`
+}
+
+type settleDurations struct {
+	clusterRead, connect, databaseRead, close time.Duration
+}
+
+func (d *settleDurations) add(other settleDurations) {
+	d.clusterRead += other.clusterRead
+	d.connect += other.connect
+	d.databaseRead += other.databaseRead
+	d.close += other.close
+}
+
+func (d settleDurations) report(rep *SettleReport) {
+	rep.ClusterReadMillis = d.clusterRead.Milliseconds()
+	rep.ConnectMillis = d.connect.Milliseconds()
+	rep.DatabaseReadMillis = d.databaseRead.Milliseconds()
+	rep.CloseMillis = d.close.Milliseconds()
+	rep.ObservationMillis = (d.clusterRead + d.connect + d.databaseRead + d.close).Milliseconds()
 }
 
 // settleSample is one read of a promoted cluster.
 type settleSample struct {
 	healthy, inRecovery, pending bool
 	server                       time.Time // pg_postmaster_start_time; zero when not read
+	durations                    settleDurations
 }
 
 func (s settleSample) settled() bool { return s.healthy && !s.inRecovery && !s.pending }
@@ -709,11 +737,14 @@ func (e *Engine) waitSettled(ctx context.Context, c Cluster, dsn string, slot *D
 		*slot = nil
 	}
 	var rep SettleReport
+	var durations settleDurations
 	var server time.Time // postmaster start of the last read that had one
 	start, stable := time.Now(), 0
 	for {
 		rep.Polls++
 		s, err := e.observeSettled(ctx, c, dsn)
+		durations.add(s.durations)
+		durations.report(&rep)
 		if err == nil && !s.server.IsZero() {
 			if !server.IsZero() && !s.server.Equal(server) {
 				rep.Restarts++
@@ -755,18 +786,31 @@ func (e *Engine) waitSettled(ctx context.Context, c Cluster, dsn string, slot *D
 // read even when the Cluster is not healthy, so the report says which of them
 // held the settle back. err means the Cluster could not be read; a database
 // that cannot be reached leaves the sample unsettled with no server time.
-func (e *Engine) observeSettled(ctx context.Context, c Cluster, dsn string) (settleSample, error) {
-	var s settleSample
+func (e *Engine) observeSettled(ctx context.Context, c Cluster, dsn string) (s settleSample, err error) {
+	started := time.Now()
 	st, err := c.Get(ctx)
+	s.durations.clusterRead = time.Since(started)
 	if err != nil {
 		return s, err
 	}
 	s.healthy = st.Healthy()
+	started = time.Now()
 	db, err := e.connect(ctx, dsn)
+	s.durations.connect = time.Since(started)
 	if err != nil {
 		return s, err
 	}
-	defer db.Close()
+	defer func() {
+		started := time.Now()
+		db.Close()
+		s.durations.close = time.Since(started)
+	}()
+	queryStarted := time.Now()
+	defer func() { s.durations.databaseRead = time.Since(queryStarted) }()
+	if observer, ok := db.(settleObserver); ok {
+		s.inRecovery, s.pending, s.server, err = observer.SettleStatus(ctx)
+		return s, err
+	}
 	if s.inRecovery, err = db.InRecovery(ctx); err != nil {
 		return s, err
 	}

@@ -129,7 +129,9 @@ copy "$cloud" "$onprem" pg-src-app
 echo "== target pg-dst on hoponprem (pg_basebackup across clusters)"
 started=$(date +%s)
 retry ko apply -f "$here/target.yaml"
-ko wait cluster/pg-dst --for=jsonpath='{.status.phase}'="Cluster in healthy state" --timeout=600s >/dev/null
+target_ready_timeout=600s
+[ "${SOURCE_WRITE_FENCE_REHEARSAL:-}" != 1 ] || target_ready_timeout=180s
+ko wait cluster/pg-dst --for=jsonpath='{.status.phase}'="Cluster in healthy state" --timeout="$target_ready_timeout" >/dev/null
 ko wait pod/pg-dst-1 --for=condition=Ready --timeout=300s >/dev/null
 echo "   healthy after $(( $(date +%s) - started ))s; wal receiver: $(ko exec pg-dst-1 -c postgres -- psql -tA -c 'select status from pg_stat_wal_receiver')"
 

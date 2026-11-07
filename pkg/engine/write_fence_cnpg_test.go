@@ -3,9 +3,11 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,7 +18,22 @@ import (
 
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/plan"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgproto3"
 )
+
+// Discard all trace payloads, including auth data. Only the protocol event is
+// observed; no trace content is retained or printed.
+type fixtureAuthenticationTrace struct {
+	ready chan struct{}
+	once  sync.Once
+}
+
+func (v *fixtureAuthenticationTrace) Write(p []byte) (int, error) {
+	if bytes.Contains(p, []byte("AuthenticationOk")) {
+		v.once.Do(func() { close(v.ready) })
+	}
+	return len(p), nil
+}
 
 // This fixture exercises real CNPG controllers in two disposable kind clusters.
 // The HTTP server is only a control-plane contract fixture, not a traffic proxy;
@@ -51,6 +68,7 @@ func TestSourceWriteFenceCNPGShutdownCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	lateResult := make(chan error, 1)
+	authenticated := make(chan struct{})
 	var mu sync.Mutex
 	held, excluded := false, ""
 	backend := "src"
@@ -74,6 +92,11 @@ func TestSourceWriteFenceCNPGShutdownCheckpoint(t *testing.T) {
 						return
 					}
 					config.RuntimeParams["options"] = "-c post_auth_delay=3"
+					config.BuildFrontend = func(r io.Reader, w io.Writer) *pgproto3.Frontend {
+						frontend := pgproto3.NewFrontend(r, w)
+						frontend.Trace(&fixtureAuthenticationTrace{ready: authenticated}, pgproto3.TracerOptions{SuppressTimestamps: true})
+						return frontend
+					}
 					c, e := pgx.ConnectConfig(ctx, config)
 					if e == nil {
 						_, e = c.Exec(ctx, `INSERT INTO orders(total,note) VALUES (2,'fence-late-authentication')`)
@@ -81,7 +104,25 @@ func TestSourceWriteFenceCNPGShutdownCheckpoint(t *testing.T) {
 					}
 					lateResult <- e
 				}()
-				time.Sleep(200 * time.Millisecond)
+				select {
+				case <-authenticated:
+				case <-time.After(2 * time.Second):
+					http.Error(w, "late client never completed authentication before HBA fencing", 503)
+					return
+				}
+				observer, e := pgx.Connect(ctx, observerDSN)
+				if e != nil {
+					http.Error(w, "cannot observe the fixture startup race", 503)
+					return
+				}
+				var visible int
+				e = observer.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND usename='app' AND backend_type='client backend'`).Scan(&visible)
+				_ = observer.Close(ctx)
+				if e != nil || visible != 1 {
+					http.Error(w, "authenticated late client was not hidden from the source-drain snapshot", 503)
+					return
+				}
+				t.Log("late SQL client authenticated but is absent from the source writer snapshot")
 			})
 		case "/v1/reads/exclude", "/v1/reads/include":
 			var body struct{ Backend, Lease string }

@@ -120,6 +120,10 @@ func cmdValidate(args []string) error {
 	if c.json {
 		return printJSON(p)
 	}
+	if p.Stateless() {
+		fmt.Printf("plan %q OK: no database, gateway %s → %s\n", p.ID, p.Gateway.SourceBackend, p.Gateway.TargetBackend)
+		return nil
+	}
 	if p.Source.External() {
 		fmt.Printf("plan %q OK: external %s (%s) → %s/%s (%s)\n", p.ID,
 			p.Source.Name, p.Source.Env, p.Target.Namespace, p.Target.Cluster, p.Target.Env)
@@ -139,6 +143,12 @@ func cmdStatus(ctx context.Context, args []string) error {
 		return err
 	}
 	out := map[string]any{}
+	if p.Stateless() {
+		for role, ep := range map[string]plan.Endpoint{"source": p.Source, "target": p.Target} {
+			out[role] = map[string]string{"kind": plan.KindNone, "env": ep.Env}
+		}
+		return printJSON(out)
+	}
 	for role, ep := range map[string]plan.Endpoint{"source": p.Source, "target": p.Target} {
 		if ep.External() {
 			out[role] = map[string]string{"kind": plan.SourceExternal, "name": ep.Name}
@@ -272,19 +282,20 @@ func cmdVerify(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	src, err := pg.Connect(ctx, p.Source.DSN)
-	if err != nil {
-		return fmt.Errorf("source: %w", err)
-	}
-	defer src.Close()
-	dst, err := pg.Connect(ctx, p.Target.DSN)
-	if err != nil {
-		return fmt.Errorf("target: %w", err)
-	}
-	defer dst.Close()
 	var rc engine.FileSyncer
 	if p.Files != nil {
 		rc = files.New(p.Files.Rclone, p.Files.Flags)
+	}
+	var src, dst *pg.DB
+	if !p.Stateless() { // no database to compare (ADR 0018)
+		if src, err = pg.Connect(ctx, p.Source.DSN); err != nil {
+			return fmt.Errorf("source: %w", err)
+		}
+		defer src.Close()
+		if dst, err = pg.Connect(ctx, p.Target.DSN); err != nil {
+			return fmt.Errorf("target: %w", err)
+		}
+		defer dst.Close()
 	}
 	rep, err := engine.Verify(ctx, p, src, dst, rc)
 	if err != nil {

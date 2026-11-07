@@ -12,6 +12,9 @@ import (
 func endpointScope(e plan.Endpoint) string { return e.Env + "/" + e.Namespace + "/" + e.Cluster }
 
 func (e *Engine) configureLoad(p *plan.Plan) error {
+	if p.Stateless() {
+		return nil // no database to protect (ADR 0018)
+	}
 	policy, err := loadguard.FromEnv()
 	if err != nil {
 		return err

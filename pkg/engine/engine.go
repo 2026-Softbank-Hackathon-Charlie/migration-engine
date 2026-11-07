@@ -142,7 +142,10 @@ func New(p *plan.Plan, opt Options) (*Engine, error) {
 
 	// Adapters first, so a bad kubeconfig does not leave an orphan state file.
 	e.src, e.dst = opt.SourceCluster, opt.TargetCluster
-	if p.Source.External() {
+	if p.Stateless() {
+		// No database on either side (ADR 0018).
+		e.src, e.dst = nil, nil
+	} else if p.Source.External() {
 		e.src, e.ext = nil, opt.External
 		if e.ext == nil {
 			e.ext = pgExternal{dsn: p.Source.DSN}
@@ -154,7 +157,7 @@ func New(p *plan.Plan, opt Options) (*Engine, error) {
 		}
 		e.src = cnpg.New(dyn, p.Source.Namespace, p.Source.Cluster)
 	}
-	if e.dst == nil {
+	if e.dst == nil && !p.Stateless() {
 		dyn, err := kube.Dynamic(p.Target.Kubeconfig, p.Target.Context)
 		if err != nil {
 			return nil, fmt.Errorf("target: %w", err)
@@ -189,6 +192,13 @@ func New(p *plan.Plan, opt Options) (*Engine, error) {
 			}
 			e.app = kubeApp{inv: &kube.Inventory{Dyn: dyn, Namespace: p.Target.Namespace}, res: kube.Resource{Kind: a.Kind, Name: a.Name}}
 		}
+		if e.prober == nil {
+			e.prober = httpProber{client: &http.Client{Timeout: 10 * time.Second}}
+		}
+	}
+	if p.Stateless() && e.prober == nil {
+		// A warm stateless plan may smoke-test the target app (ADR 0018).
+		e.prober = opt.Prober
 		if e.prober == nil {
 			e.prober = httpProber{client: &http.Client{Timeout: 10 * time.Second}}
 		}
@@ -317,6 +327,9 @@ func (e *Engine) ResumeHalted(ctx context.Context) error {
 	if st.Outcome != OutcomeHalted {
 		return fmt.Errorf("run %s is %s, not halted", st.RunID, st.Outcome)
 	}
+	if e.plan.Stateless() {
+		return e.resumeHaltedStateless(ctx, st)
+	}
 	if e.plan.Source.External() {
 		return e.resumeHaltedExternal(ctx, st)
 	}
@@ -427,6 +440,11 @@ var stepFuncs = map[string]stepFunc{
 // stepFunc is the function of a step for this plan: an external source
 // replaces some steps (ADR 0019), the others are shared.
 func (e *Engine) stepFunc(name string) stepFunc {
+	if e.plan.Stateless() {
+		if f, ok := statelessStepFuncs[name]; ok {
+			return f
+		}
+	}
 	if e.plan.Source.External() {
 		if f, ok := externalStepFuncs[name]; ok {
 			return f
@@ -439,6 +457,9 @@ func (e *Engine) stepFunc(name string) stepFunc {
 func (e *Engine) skipReason(name string) string {
 	if name == StepStartTarget && !e.plan.Target.App.Cold() {
 		return "warm mode: the target app already runs"
+	}
+	if e.plan.Stateless() {
+		return statelessSkip[name]
 	}
 	return ""
 }
@@ -486,6 +507,9 @@ func (e *Engine) onFailure(step string, cause error) error {
 	e.mu.Lock()
 	e.state.FailureStep, e.state.FailureError = step, cause.Error()
 	e.mu.Unlock()
+	if e.plan.Stateless() {
+		return e.onStatelessFailure(step, cause)
+	}
 	if e.plan.Source.External() {
 		return e.onExternalFailure(step, cause)
 	}

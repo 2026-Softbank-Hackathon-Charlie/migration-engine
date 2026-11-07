@@ -150,6 +150,21 @@ VM의 compose처럼 CNPG 밖에서 돌던 PostgreSQL을 원본으로 둡니다. 
 - `gateway.sourceBackend`는 게이트웨이에 실제로 있는 백엔드 이름이어야 합니다. 엔진은 확인하지 못합니다.
 - `target.reindex`의 인덱스는 승격하고 안정된 대상에서 앱을 띄우기 전에 차례로 `REINDEX INDEX`합니다.
 
+### B3. 데이터베이스가 없는 앱 (`kind: none`, ADR 0018)
+postgres 리소스가 없는 앱은 게이트웨이 경로와 파일만 옮깁니다.
+
+```json
+"source": {"kind": "none", "env": "eks"},
+"target": {"kind": "none", "env": "gke",
+           "app": {"smokeUrl": "https://doom-gke.example", "smoke": [{"method": "GET", "path": "/"}]}},
+"gateway": {"mode": "http", "url": "${GATEWAY_URL}"}
+```
+
+- 원본과 대상 모두 `kind: none`이어야 하고 `env`만 씁니다. cold 앱이면 `target.namespace`(필수), `kubeconfig`, `context`를 받습니다.
+- `gateway.mode: http`가 필수입니다. `verify.schemas`, `tables`, `writtenRecords`, `fenceGate: true`, `decommission`은 받지 않습니다.
+- presync와 switchover는 건너뜁니다. fence는 쓰기를 붙잡고 마지막 파일 복사를 하고, cutover가 경로를 옮깁니다.
+- 어느 단계에서 실패해도, cutover 뒤라도 원본으로 경로를 돌립니다. cutover 뒤 대상에 쓰인 파일은 원본으로 복사하지 않습니다.
+
 ### C. 게이트웨이 HTTP 계약 (`pkg/gateway`, 아직 제안 단계)
 | 요청 | 의미 |
 | --- | --- |

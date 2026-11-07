@@ -343,7 +343,7 @@ func (e *Engine) RunStep(ctx context.Context, name string) error {
 // Any doubt keeps the run halted with the reason.
 func (e *Engine) ResumeHalted(ctx context.Context) error {
 	st := e.State()
-	if f := st.SourceWriteFence; f != nil && f.Intent && !f.Released {
+	if f := st.SourceWriteFence; f != nil && f.Intent && (!f.Released || e.writeFencer == nil) {
 		return errors.New("source-local SQL fence remains owned by this run; reconcile it explicitly before resume")
 	}
 	if st.Outcome != OutcomeHalted {
@@ -414,7 +414,7 @@ func (e *Engine) markResumed(st State, ev map[string]any, msg string) {
 }
 
 func (e *Engine) checkRunnable() error {
-	if f := e.state.SourceWriteFence; f != nil && f.Intent && !f.Released && e.writeFencer == nil {
+	if f := e.state.SourceWriteFence; f != nil && f.Intent && e.writeFencer == nil && e.state.Outcome != OutcomeSucceeded {
 		e.mu.Lock()
 		e.state.Outcome = OutcomeHalted
 		e.state.FailureStep = StepFence

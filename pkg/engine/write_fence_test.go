@@ -197,3 +197,22 @@ func TestSourceSQLFenceProcessRestartRequiresReconciliation(t *testing.T) {
 		t.Fatal("persisted SQL fence replayed after process restart")
 	}
 }
+
+func TestSourceSQLFenceRestartAfterReadAdmissionRestoredStillHalts(t *testing.T) {
+	h, e, _ := fencedHarness(t)
+	runThrough(t, e, StepStartTarget)
+	if !e.State().SourceWriteFence.Released || !e.State().PromoteRequested {
+		t.Fatal("fixture did not reach restored replica admission after promotion")
+	}
+	e.Close()
+	resumed := h.engine(t, e.RunID())
+	if err := resumed.Run(context.Background()); err == nil || resumed.State().Outcome != OutcomeHalted {
+		t.Fatal("restart lost pinned observer and resumed through cutover")
+	}
+	if err := resumed.ResumeHalted(context.Background()); err == nil {
+		t.Fatal("generic resume bypassed lost source endpoint/checkpoint ownership")
+	}
+	if contains(h.w.Calls(), "gw.release") {
+		t.Fatal("restart released HTTP writes without source fence reconciliation")
+	}
+}

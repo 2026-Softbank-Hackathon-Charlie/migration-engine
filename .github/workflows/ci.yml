@@ -44,6 +44,8 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+      - name: Compile the real CNPG fixture before provisioning
+        run: go test -tags cnpgfence -run '^$' ./pkg/engine
       - name: Install verified kind binary
         run: |
           curl --fail --location --retry 3 -o "$RUNNER_TEMP/kind" https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64

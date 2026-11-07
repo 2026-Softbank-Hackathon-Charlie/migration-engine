@@ -11,7 +11,7 @@ import (
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/plan"
 )
 
-// Stateless plans (ADR 0018): an app without a database, such as docker-doom,
+// Stateless plans (ADR 0020): an app without a database, such as docker-doom,
 // moves from eks to gke by the gateway route and its files only.
 
 const statelessSmoke = "probe GET http://doom.gke.example:8080/"

@@ -143,7 +143,7 @@ func New(p *plan.Plan, opt Options) (*Engine, error) {
 	// Adapters first, so a bad kubeconfig does not leave an orphan state file.
 	e.src, e.dst = opt.SourceCluster, opt.TargetCluster
 	if p.Stateless() {
-		// No database on either side (ADR 0018).
+		// No database on either side (ADR 0020).
 		e.src, e.dst = nil, nil
 	} else if p.Source.External() {
 		e.src, e.ext = nil, opt.External
@@ -197,7 +197,7 @@ func New(p *plan.Plan, opt Options) (*Engine, error) {
 		}
 	}
 	if p.Stateless() && e.prober == nil {
-		// A warm stateless plan may smoke-test the target app (ADR 0018).
+		// A warm stateless plan may smoke-test the target app (ADR 0020).
 		e.prober = opt.Prober
 		if e.prober == nil {
 			e.prober = httpProber{client: &http.Client{Timeout: 10 * time.Second}}

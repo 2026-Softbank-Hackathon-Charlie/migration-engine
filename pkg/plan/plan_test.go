@@ -277,6 +277,7 @@ func TestStateless(t *testing.T) {
 		"fenceGate true":           {src, dst, `,"verify":{"fenceGate":true}`, "fenceGate"},
 		"verify tables":            {src, dst, `,"verify":{"tables":["public.t"]}`, "verify.schemas"},
 		"written records":          {src, dst, `,"verify":{"writtenRecords":"w.jsonl"}`, "verify.schemas"},
+		"source rewire":            {src, dst, `,"allowSourceRewire":true`, "allowSourceRewire"},
 		"decommission":             {src, dst, `,"decommission":{"selector":"app=doom","smokeUrl":"http://gw","smoke":[{"method":"GET","path":"/"}]}`, "decommission"},
 		"warm app kind":            {src, `{"kind":"none","env":"gke","app":{"kind":"Deployment","name":"doom"}}`, "", "only for target.app.mode cold"},
 		"same backends":            {src, dst, `,"gateway":{"mode":"http","url":"http://gw","targetBackend":"eks"}`, "route would not move"},

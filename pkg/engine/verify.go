@@ -26,7 +26,7 @@ type Report struct {
 
 // Verify runs the post-cutover checks. It is also usable standalone (CLI `verify`).
 // rc may be nil when files are not migrated; src and dst are nil for a
-// stateless plan (ADR 0018).
+// stateless plan (ADR 0020).
 func Verify(ctx context.Context, p *plan.Plan, src, dst *pg.DB, rc FileSyncer) (*Report, error) {
 	if p.Stateless() {
 		return verifyStateless(ctx, p, rc), nil
@@ -136,7 +136,7 @@ func verifyExternal(ctx context.Context, p *plan.Plan, dst *pg.DB, rc FileSyncer
 }
 
 // verifyStateless is the post-cutover check of an app without a database
-// (ADR 0018): every source object is on the target (rclone check --one-way).
+// (ADR 0020): every source object is on the target (rclone check --one-way).
 func verifyStateless(ctx context.Context, p *plan.Plan, rc FileSyncer) *Report {
 	rep := &Report{Durability: "no database; only files were copied, and objects written to the target after cutover are not copied back on a rollback"}
 	if rc != nil && p.Files != nil {

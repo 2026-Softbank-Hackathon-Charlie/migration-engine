@@ -79,7 +79,7 @@ type FileSyncer interface {
 	Sync(ctx context.Context, src, dst string) (files.SyncResult, error)
 	Check(ctx context.Context, src, dst string) (files.CheckResult, error)
 	// Copy is Sync without deleting from dst; Readable lists remote's top
-	// level (stateless plans, ADR 0018).
+	// level (stateless plans, ADR 0020).
 	Copy(ctx context.Context, src, dst string) (files.SyncResult, error)
 	Readable(ctx context.Context, remote string) error
 }

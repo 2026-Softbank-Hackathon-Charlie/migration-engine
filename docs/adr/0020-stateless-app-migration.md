@@ -1,12 +1,12 @@
-# 0018. 데이터베이스가 없는 앱은 게이트웨이 경로와 파일만 옮기고, 언제든 원본으로 되돌린다
+# 0020. 데이터베이스가 없는 앱은 게이트웨이 경로와 파일만 옮기고, 언제든 원본으로 되돌린다
 
 - 상태: 채택
 - 날짜: 2026-11-07
-- 관련: [0002 고정 단계와 상태 파일](0002-fixed-steps-and-state-file.md), [0003 원복 경계](0003-rollback-boundary.md), [0005 게이트웨이 계약](0005-gateway-contract.md), [0012 cold 모드](0012-start-target-app-after-promotion.md), [0013 halt 재개](0013-shorter-write-pause-and-recoverable-halt.md), [0017 외부 원본](0017-external-source-switchover.md)
+- 관련: [0002 고정 단계와 상태 파일](0002-fixed-steps-and-state-file.md), [0003 원복 경계](0003-rollback-boundary.md), [0005 게이트웨이 계약](0005-gateway-contract.md), [0012 cold 모드](0012-start-target-app-after-promotion.md), [0013 halt 재개](0013-shorter-write-pause-and-recoverable-halt.md), [0019 외부 원본](0019-external-source-switchover.md)
 
 ## 상황
 
-팀은 10/31에 상태가 있는 앱과 없는 앱을 모두 옮길 수 있어야 한다고 정했다. docker-doom처럼 postgres 리소스가 없는 앱은 플랫폼이 EKS와 GKE에 모두 배포하지만, 엔진으로는 옮길 수 없다. Plan의 원본과 대상이 모두 CNPG Cluster(또는 0017의 외부 PostgreSQL)여야 하고, 모든 단계가 데이터베이스를 읽기 때문이다.
+팀은 10/31에 상태가 있는 앱과 없는 앱을 모두 옮길 수 있어야 한다고 정했다. docker-doom처럼 postgres 리소스가 없는 앱은 플랫폼이 EKS와 GKE에 모두 배포하지만, 엔진으로는 옮길 수 없다. Plan의 원본과 대상이 모두 CNPG Cluster(또는 0019의 외부 PostgreSQL)여야 하고, 모든 단계가 데이터베이스를 읽기 때문이다.
 
 이런 앱에서 옮길 것은 게이트웨이 경로와, 있다면 오브젝트 스토리지 파일뿐이다. 양쪽 앱은 이미 떠 있고 서로 공유하는 상태가 없다.
 
@@ -78,7 +78,7 @@ stateless plan의 파일 복사(prepare, delta, fence)는 `rclone sync`가 아�
 
 ## 검토한 대안
 
-- 원본과 대상 kind를 나누지 않고 Plan 최상위에 `stateless: true`를 둔다. 원본과 대상이 각자 무엇인지 말하는 0017의 `kind`와 어긋나고, 한쪽에만 데이터베이스가 있는 경우를 막는 규칙을 따로 써야 해서 쓰지 않았다.
+- 원본과 대상 kind를 나누지 않고 Plan 최상위에 `stateless: true`를 둔다. 원본과 대상이 각자 무엇인지 말하는 0019의 `kind`와 어긋나고, 한쪽에만 데이터베이스가 있는 경우를 막는 규칙을 따로 써야 해서 쓰지 않았다.
 - switchover 단계에서 경로를 옮긴다. 경로 변경과 쓰기 해제는 이미 cutover가 하고, cold 앱 기동이 그 사이에 와야 하므로 cutover를 그대로 썼다.
 - decommission을 지원한다. 원본 앱 정지와 smoke는 쓸 수 있지만 지금 구현은 옛 데이터베이스 세션 관찰과 차단에 묶여 있어 따로 다룬다.
 

@@ -1,6 +1,6 @@
 package engine
 
-// A stateless plan (ADR 0018) moves an app without a database: source.kind
+// A stateless plan (ADR 0020) moves an app without a database: source.kind
 // and target.kind are both "none". Only the gateway route moves, plus the
 // files when the plan has them. The steps keep their names:
 //
@@ -140,7 +140,7 @@ func (e *Engine) statelessFence(ctx context.Context) (map[string]any, error) {
 }
 
 // statelessSync copies new and changed files and never deletes from the
-// target (ADR 0018).
+// target (ADR 0020).
 func (e *Engine) statelessSync(ctx context.Context, ev map[string]any) error {
 	if e.rclone == nil {
 		return nil

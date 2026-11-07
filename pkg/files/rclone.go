@@ -58,7 +58,7 @@ func (r *Rclone) Sync(ctx context.Context, src, dst string) (SyncResult, error) 
 }
 
 // Copy copies new and changed objects from src to dst and never deletes
-// from dst (stateless plans, ADR 0018).
+// from dst (stateless plans, ADR 0020).
 func (r *Rclone) Copy(ctx context.Context, src, dst string) (SyncResult, error) {
 	args := append([]string{"copy", src, dst, "--stats-one-line", "--stats-log-level", "NOTICE", "--stats", "0"}, r.Flags...)
 	start := time.Now()

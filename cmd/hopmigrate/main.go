@@ -287,7 +287,7 @@ func cmdVerify(ctx context.Context, args []string) error {
 		rc = files.New(p.Files.Rclone, p.Files.Flags)
 	}
 	var src, dst *pg.DB
-	if !p.Stateless() { // no database to compare (ADR 0018)
+	if !p.Stateless() { // no database to compare (ADR 0020)
 		if src, err = pg.Connect(ctx, p.Source.DSN); err != nil {
 			return fmt.Errorf("source: %w", err)
 		}

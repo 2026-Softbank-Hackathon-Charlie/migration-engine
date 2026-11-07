@@ -39,7 +39,7 @@ type Plan struct {
 // ends together) no database at all (ADR 0020).
 type Endpoint struct {
 	// Kind: "cnpg" (default), "external" (source only) or "none" (both
-	// source and target: the app has no database, ADR 0018).
+	// source and target: the app has no database, ADR 0020).
 	Kind string `json:"kind,omitempty"`
 	// Name (external source only) is the source's name in the target
 	// Cluster's externalClusters, which the target's replica.primary names.
@@ -70,14 +70,14 @@ const (
 	SourceExternal = "external"
 )
 
-// KindNone on both endpoints means the app has no database (ADR 0018).
+// KindNone on both endpoints means the app has no database (ADR 0020).
 const KindNone = "none"
 
 // External reports whether the endpoint is a PostgreSQL primary outside CNPG.
 func (e Endpoint) External() bool { return e.Kind == SourceExternal }
 
 // Stateless reports whether the plan moves an app without a database: only
-// the gateway route and, optionally, files (ADR 0018).
+// the gateway route and, optionally, files (ADR 0020).
 func (p *Plan) Stateless() bool { return p.Source.Kind == KindNone && p.Target.Kind == KindNone }
 
 // App start modes (ADR 0012).
@@ -406,7 +406,7 @@ func (p *Plan) validateKinds() []error {
 	return errs
 }
 
-// validateStateless checks a plan for an app without a database (ADR 0018):
+// validateStateless checks a plan for an app without a database (ADR 0020):
 // both kinds are none, no endpoint names a database, and nothing asks for a
 // database comparison. Only a cold target app may say where it runs.
 func (p *Plan) validateStateless() []error {
@@ -465,6 +465,9 @@ func (p *Plan) validateStateless() []error {
 	}
 	if v.FenceGate != nil && *v.FenceGate {
 		errs = append(errs, fmt.Errorf("verify.fenceGate must be false or omitted for kind %q (no database to compare)", KindNone))
+	}
+	if p.AllowSourceRewire {
+		errs = append(errs, fmt.Errorf("allowSourceRewire is not supported for kind %q (no database topology)", KindNone))
 	}
 	if p.Decommission != nil {
 		errs = append(errs, fmt.Errorf("decommission is not supported for kind %q yet (it retires a source database)", KindNone))

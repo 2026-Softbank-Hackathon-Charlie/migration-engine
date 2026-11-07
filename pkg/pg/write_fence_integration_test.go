@@ -4,6 +4,7 @@ package pg
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -127,6 +128,24 @@ func TestSourceHBAWriteFence(t *testing.T) {
 	if _, err = control.Exec(ctx, `REVOKE hop_fence_privileged FROM hop_fence_reader; DROP ROLE hop_fence_privileged`); err != nil {
 		t.Fatal(err)
 	}
+	for _, adminRole := range []string{"pg_execute_server_program", "pg_write_server_files", "pg_read_server_files", "pg_signal_backend"} {
+		grant := fmt.Sprintf("GRANT %s TO hop_fence_hidden WITH INHERIT FALSE, SET TRUE", pgx.Identifier{adminRole}.Sanitize())
+		if _, err = control.Exec(ctx, grant); err != nil {
+			t.Fatal(err)
+		}
+		if err = fence.CheckRoles(ctx); err == nil || !strings.Contains(err.Error(), "hop_fence_hidden") {
+			t.Fatalf("undeclared login with %s bypassed inventory: %v", adminRole, err)
+		}
+		if _, err = control.Exec(ctx, fmt.Sprintf("REVOKE %s FROM hop_fence_hidden; GRANT %s TO hop_fence_reader WITH INHERIT FALSE, SET TRUE", pgx.Identifier{adminRole}.Sanitize(), pgx.Identifier{adminRole}.Sanitize())); err != nil {
+			t.Fatal(err)
+		}
+		if err = fence.CheckRoles(ctx); err == nil || !strings.Contains(err.Error(), "assume privileged") {
+			t.Fatalf("declared login with %s accepted as ordinary: %v", adminRole, err)
+		}
+		if _, err = control.Exec(ctx, fmt.Sprintf("REVOKE %s FROM hop_fence_reader", pgx.Identifier{adminRole}.Sanitize())); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err = fence.Precheck(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -245,5 +264,17 @@ func TestSourceHBAWriteFence(t *testing.T) {
 			t.Fatal("original HBA never restored")
 		case <-time.After(10 * time.Millisecond):
 		}
+	}
+	var terminated bool
+	if err = control.QueryRow(ctx, `SELECT pg_terminate_backend($1,1000)`, fence.pid).Scan(&terminated); err != nil || !terminated {
+		t.Fatalf("observer-loss fixture: stopped=%v err=%v", terminated, err)
+	}
+	// Force the cached number to match the replacement's PID. Even PID reuse
+	// must not make a fresh connection count as the original observer.
+	if err = observer.Pool.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&fence.pid); err != nil {
+		t.Fatal(err)
+	}
+	if err = fence.Pinned(ctx); err == nil {
+		t.Fatal("a replacement observer was accepted because its PID matched")
 	}
 }

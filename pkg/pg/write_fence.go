@@ -19,10 +19,11 @@ import (
 // The source DSN must be a distinct read-only observer with pg_read_all_stats
 // and pg_signal_backend. It is never silently elevated or granted privileges.
 type WriterFence struct {
-	DB    *DB
-	DSN   string
-	Roles []string
-	pid   int32
+	DB           *DB
+	DSN          string
+	Roles        []string
+	pid          int32
+	observerConn *pgx.Conn
 }
 
 func (f *WriterFence) VerifySystemIdentifier(ctx context.Context, expected string) error {
@@ -75,6 +76,8 @@ WHERE login.rolcanlogin AND NOT login.rolsuper AND EXISTS (
  SELECT 1 FROM pg_roles r WHERE
  (r.oid=login.oid OR pg_has_role(login.oid,r.oid,'SET') OR pg_has_role(login.oid,r.oid,'USAGE')) AND (
  r.rolsuper OR r.rolcreaterole OR r.rolcreatedb OR r.rolbypassrls OR
+ r.rolname IN ('pg_execute_server_program','pg_write_server_files','pg_read_server_files','pg_checkpoint','pg_maintain','pg_create_subscription') OR
+ (r.rolname='pg_signal_backend' AND login.rolname<>current_user) OR
  has_database_privilege(r.oid,current_database(),'CREATE') OR
  EXISTS(SELECT 1 FROM pg_namespace n WHERE left(n.nspname,3)<>'pg_' AND n.nspname<>'information_schema'
  AND has_schema_privilege(r.oid,n.oid,'CREATE')) OR
@@ -122,7 +125,8 @@ func (f *WriterFence) CheckRoles(ctx context.Context) error {
 	var privileged int
 	err = f.DB.Pool.QueryRow(ctx, `SELECT count(*) FROM pg_roles login WHERE login.rolname=ANY($1) AND EXISTS (
 	 SELECT 1 FROM pg_roles r WHERE (r.oid=login.oid OR pg_has_role(login.oid,r.oid,'SET') OR pg_has_role(login.oid,r.oid,'USAGE'))
-	 AND (r.rolsuper OR r.rolreplication OR r.rolcreaterole OR r.rolcreatedb OR r.rolbypassrls))`, f.Roles).Scan(&privileged)
+	 AND (r.rolsuper OR r.rolreplication OR r.rolcreaterole OR r.rolcreatedb OR r.rolbypassrls
+	 OR r.rolname IN ('pg_execute_server_program','pg_write_server_files','pg_read_server_files','pg_checkpoint','pg_maintain','pg_create_subscription','pg_signal_backend')))`, f.Roles).Scan(&privileged)
 	if err != nil {
 		return err
 	}
@@ -184,18 +188,34 @@ func (f *WriterFence) Precheck(ctx context.Context) error {
 		return err
 	}
 	var pid int32
-	if err = p.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&pid); err != nil {
+	conn, err := p.Acquire(ctx)
+	if err != nil {
+		p.Close()
+		return err
+	}
+	actualConn := conn.Conn()
+	err = conn.QueryRow(ctx, `SELECT pg_catalog.pg_backend_pid()`).Scan(&pid)
+	conn.Release()
+	if err != nil {
 		p.Close()
 		return err
 	}
 	f.DB.Pool.Close()
-	f.DB.Pool, f.pid = p, pid
+	f.DB.Pool, f.pid, f.observerConn = p, pid, actualConn
 	return nil
 }
 
 func (f *WriterFence) Pinned(ctx context.Context) error {
+	conn, err := f.DB.Pool.Acquire(ctx)
+	if err != nil {
+		return errors.New("write fence verifier connection was lost; leave fence and held writes for operator reconciliation")
+	}
+	defer conn.Release()
 	var pid int32
-	if err := f.DB.Pool.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&pid); err != nil || pid != f.pid {
+	if conn.Conn() != f.observerConn {
+		return errors.New("write fence verifier connection was replaced; leave fence and held writes for operator reconciliation")
+	}
+	if err := conn.QueryRow(ctx, `SELECT pg_catalog.pg_backend_pid()`).Scan(&pid); err != nil || pid != f.pid {
 		return errors.New("write fence verifier connection was lost; leave fence and held writes for operator reconciliation")
 	}
 	return nil

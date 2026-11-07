@@ -22,7 +22,7 @@ HTTP Hold는 배치, 직접 SQL, HTTP 응답 이후 작업을 막지 않는다. 
 5. 소스 CNPG user HBA에만 신고한 LOGIN의 IPv4/IPv6 TCP reject prefix와 소유 annotation을 CAS로 추가한다. 각 역할의 새 연결이 PostgreSQL의 명시적인 HBA reject를 받는지 실제 확인하고 기존 세션과 미완료 트랜잭션을 종료한다. 비밀번호·TLS·소켓 오류는 성공으로 보지 않는다. 이 단계는 초기 접속/세션 정리이며 최종 쓰기 장벽이라고 주장하지 않는다. 대상 HBA는 건드리지 않는다.
 6. 최종 장벽은 CNPG 소스 demotion 완료, 고정한 소스 SQL의 recovery=true 및 유효한 실제 system ID다. CNPG 1.30.1이 postmaster 종료 후 발급한 fresh token의 system ID·timeline·0이 아닌 shutdown checkpoint REDO를 확인한다. 소스 pg_control_checkpoint().redo_lsn은 최초에 token과 정확히 같아야 한다. 대상 replay도 token 경계에 도달하고 그 뒤 데이터 hash gate를 통과해야 target promotion을 요청한다. NULL/0/낮은 source replay를 최종 marker로 대신 쓰지 않는다.
 7. demotion 중 API status.systemID는 사라질 수 있다. API 값이 있으면 불일치를 거부하며, 없을 때는 UID·단일 인스턴스·replica topology·fresh token 및 고정 소스 SQL에서 직접 읽은 유효한 nonzero system ID를 모두 요구한다. API 부재를 0이나 임의의 값으로 채우지 않는다.
-8. 소스가 실제 읽기 전용임을 입증한 뒤에만 소유 HBA와 읽기 제외를 복원해 target 재시작 중 fallback 읽기를 허용한다. HTTP 쓰기는 target 안정화와 route 전환까지 Hold한다. 원본 hash·정확한 prefix·UID·lease가 다르면 타인의 변경을 보존하고 halt한다.
+8. HBA의 Active/Released는 초기 접속 통제 상태다. sourceReadOnlyConfirmed와 최종 LSN은 실제 읽기 전용 장벽 확인 뒤에만 저장한다. 그 뒤 소유 HBA와 읽기 제외를 복원해 target 재시작 중 fallback 읽기를 허용한다. HTTP 쓰기는 target 안정화와 route 전환까지 Hold한다. 원본 hash·정확한 prefix·UID·lease가 다르면 타인의 변경을 보존하고 halt한다.
 9. demotion 전에는 기존 pinned observer와 source primary가 확인될 때만 보상한다. demotion 요청 이후의 불확실성이나 저장 실패는 HBA의 Released와 관계없이 halt한다. 프로세스 재시작으로 observer를 잃으면 일반 resume로 우회하지 않는다. PromoteRequested 이후 자동 rollback 금지를 유지한다.
 
 ## 검토한 대안
@@ -36,7 +36,9 @@ HTTP Hold는 배치, 직접 SQL, HTTP 응답 이후 작업을 막지 않는다. 
 
 실제 disposable PostgreSQL primary/standby에서 SET ROLE 우회와 pgdata의 INSERT-only writer 거부, privileged role 거부, 새 HBA 연결 거부, 기존 두 트랜잭션 rollback, target 신규 읽기와 원본 HBA 복원을 검증했다. 원격 unit/race/vet/build도 통과했다. API system ID 누락과 SQL ID의 정상/0/불일치, 인증 전 TLS pin과 앱 함수의 control 관측 위장 회귀도 포함한다. 각 결과는 해당 commit의 CI와 함께 읽어야 하며 변경 후 미실행 코드를 통과했다고 해석하지 않는다.
 
-실제 CNPG 1.30.1 두 kind 클러스터에서는 HBA/drain과 source demotion까지 도달했다. 전체 shutdown checkpoint→target replay→hash gate→promotion→cutover 성공은 아직 검증 중이다. SCRAM 응답을 보류한 실제 client로 초기 marker 뒤 commit과 demotion 뒤 old backend 종료를 확인하는 추가 시험 완료 전에는 Draft를 유지한다. HTTP 제어 서버는 DB 시험의 계약 fixture이며 실제 proxy 증거는 병합된 platform #135 회귀와 구분한다.
+7b04d02의 [실제 CNPG CI](https://github.com/2026-Softbank-Hackathon-Charlie/migration-engine/actions/runs/42376749488/job/128415791035)는 CNPG 1.30.1, PostgreSQL 18.6, 두 kind 클러스터에서 shutdown checkpoint→target replay→hash gate→promotion→cutover→verify를 모두 통과했다. 원래 HBA를 선택했지만 세션 집계에 없는 두 client의 SCRAM 응답을 보류했다. 하나는 초기 marker 뒤 실제 commit했고 최종 checkpoint 0/5000028이 late commit LSN 0/4062650을 포함했다. target의 해당 행은 1건이며, demotion 뒤 인증을 푼 두 번째 old backend는 쓰지 못했다.
+
+이 fixture의 쓰기 Hold는 약 33초였으며 성능 최적화 성공 근거로 쓰지 않는다. 최신 상태/시간 증거 변경은 해당 commit의 CI를 별도로 확인한다. HTTP 제어 서버는 DB 시험의 계약 fixture이며 실제 proxy 증거는 병합된 platform #135 회귀와 구분한다. 다음 운영 의존성이 끝나기 전에는 Draft를 유지한다.
 
 운영에는 동시 migration controller 사이의 앱/target 배타 소유권, 소유 HBA/lease만 허용하는 admission/RBAC, 임시 필드를 보존하는 Argo CD와 observer 자격증명이 추가로 필요하다. 아직 제공하거나 적용하지 않았다. 기존 운영 정책의 dry-run 거부를 우회하지 않는다. Platform EnginePlan/OpenAPI와 AI는 새 필드를 노출·보존하지 못하므로 운영 UI에서는 지원하지 않는다. 병합된 stable 엔진 모듈로 별도 consumer 계약을 연결해야 하며 unmerged SHA를 pin하지 않는다.
 

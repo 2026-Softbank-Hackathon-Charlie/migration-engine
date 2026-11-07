@@ -66,7 +66,7 @@ func TestSourceHBAWriteFence(t *testing.T) {
 		cfg := srcConfig.Copy()
 		admin, e := pgx.ConnectConfig(cleanup, cfg)
 		if e == nil {
-			_, _ = admin.Exec(cleanup, `DROP SCHEMA IF EXISTS pgdata CASCADE; DROP TABLE IF EXISTS public.fence_probe; DROP OWNED BY hop_fence_observer,hop_fence_writer,hop_fence_reader,hop_fence_hidden; DROP ROLE IF EXISTS hop_fence_observer,hop_fence_reader,hop_fence_writer,hop_fence_hidden`)
+			_, _ = admin.Exec(cleanup, `DROP SCHEMA IF EXISTS pgdata CASCADE; DROP TABLE IF EXISTS public.fence_probe; DROP OWNED BY hop_fence_observer,hop_fence_writer,hop_fence_reader,hop_fence_hidden; DROP ROLE IF EXISTS hop_fence_observer,hop_fence_reader,hop_fence_writer,hop_fence_hidden,hop_fence_privileged`)
 			_ = admin.Close(cleanup)
 		}
 	})
@@ -78,7 +78,7 @@ func TestSourceHBAWriteFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = admin.Exec(ctx, `CREATE SCHEMA pgdata; CREATE TABLE pgdata.hidden(id integer); GRANT USAGE ON SCHEMA pgdata TO hop_fence_hidden; CREATE TABLE public.fence_probe(id integer PRIMARY KEY); GRANT SELECT ON public.fence_probe TO hop_fence_observer,hop_fence_writer; GRANT INSERT ON public.fence_probe TO hop_fence_writer`)
+	_, err = admin.Exec(ctx, `GRANT EXECUTE ON FUNCTION pg_control_system(),pg_control_checkpoint() TO hop_fence_observer; CREATE SCHEMA pgdata; CREATE TABLE pgdata.hidden(id integer); GRANT USAGE ON SCHEMA pgdata TO hop_fence_hidden; CREATE TABLE public.fence_probe(id integer PRIMARY KEY); GRANT SELECT ON public.fence_probe TO hop_fence_observer,hop_fence_writer; GRANT INSERT ON public.fence_probe TO hop_fence_writer`)
 	_ = admin.Close(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -118,8 +118,27 @@ func TestSourceHBAWriteFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err = control.Exec(ctx, `CREATE ROLE hop_fence_privileged NOLOGIN CREATEDB; GRANT hop_fence_privileged TO hop_fence_reader WITH INHERIT FALSE, SET TRUE`); err != nil {
+		t.Fatal(err)
+	}
+	if err = fence.CheckRoles(ctx); err == nil || !strings.Contains(err.Error(), "assume privileged") {
+		t.Fatalf("declared login could assume a privileged NOLOGIN role: %v", err)
+	}
+	if _, err = control.Exec(ctx, `REVOKE hop_fence_privileged FROM hop_fence_reader; DROP ROLE hop_fence_privileged`); err != nil {
+		t.Fatal(err)
+	}
 	if err = fence.Precheck(ctx); err != nil {
 		t.Fatal(err)
+	}
+	var systemID string
+	if err = control.QueryRow(ctx, `SELECT system_identifier::text FROM pg_control_system()`).Scan(&systemID); err != nil {
+		t.Fatal(err)
+	}
+	if err = fence.VerifySystemIdentifier(ctx, systemID); err != nil {
+		t.Fatal(err)
+	}
+	if lsn, e := observer.CheckpointREDOLSN(ctx); e != nil || lsn == "" || lsn == "0/0" {
+		t.Fatalf("control checkpoint lsn=%q err=%v", lsn, e)
 	}
 	writerConfig := srcConfig.Copy()
 	writerConfig.User, writerConfig.Password = "hop_fence_writer", "fixture-only"

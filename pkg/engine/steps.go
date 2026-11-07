@@ -27,7 +27,7 @@ func (e *Engine) precheck(ctx context.Context) (map[string]any, error) {
 	if !s.IsPrimary() {
 		return ev, fmt.Errorf("source cluster is not the topology primary (replica.primary=%q, self=%q)", s.ReplicaPrimary, s.Self)
 	}
-	if s.ReplicaSource == "" {
+	if s.ReplicaSource == "" && !e.plan.AllowSourceRewire {
 		return ev, errors.New("source spec.replica.source is empty: it must name the target's externalCluster so the source can follow the target after demotion")
 	}
 
@@ -52,8 +52,22 @@ func (e *Engine) precheck(ctx context.Context) (map[string]any, error) {
 		return ev, err
 	default:
 		ev["target"] = d
-		if err := checkTopology(s, d); err != nil {
+		if err := e.checkPreparedTopology(s, d); err != nil {
 			return ev, err
+		}
+		if e.plan.AllowSourceRewire {
+			if err := e.checkSourceRewireCapability(s, d); err != nil {
+				return ev, err
+			}
+			target, err := e.targetDB(ctx)
+			if err != nil {
+				return ev, fmt.Errorf("target db: %w", err)
+			}
+			if rec, err := target.InRecovery(ctx); err != nil {
+				return ev, err
+			} else if !rec {
+				return ev, errors.New("target database is writable; source rewire requires a replica")
+			}
 		}
 	}
 
@@ -117,7 +131,7 @@ func (e *Engine) prepare(ctx context.Context) (map[string]any, error) {
 	if err != nil {
 		return ev, err
 	}
-	if err := checkTopology(s, d); err != nil {
+	if err := e.checkPreparedTopology(s, d); err != nil {
 		return ev, err
 	}
 
@@ -130,6 +144,11 @@ func (e *Engine) prepare(ctx context.Context) (map[string]any, error) {
 	}
 	if !rec {
 		return ev, errors.New("target database is writable; it must be a replica before migration")
+	}
+	if e.plan.AllowSourceRewire {
+		if err := e.prepareSourceRewire(wctx, s, d, ev); err != nil {
+			return ev, err
+		}
 	}
 	// Replication to the old source after cutover is asynchronous, so the new
 	// primary is the only copy of the latest writes until it streams them. One
@@ -662,12 +681,40 @@ type SettleReport struct {
 	// LastBlockedMillis is when, after the wait began, a poll last saw one of
 	// the three; the rest of the wait is the settleMin floor and the polls.
 	LastBlockedMillis int64 `json:"lastBlockedMillis"`
+	// Observation times accumulate all successful and failed samples without
+	// rounding each poll. They exclude the poll sleep and are final evidence,
+	// not a live timer or the duration of CNPG's restart itself.
+	ObservationMillis  int64 `json:"observationMillis"`
+	ClusterReadMillis  int64 `json:"clusterReadMillis"`
+	ConnectMillis      int64 `json:"connectMillis"`
+	DatabaseReadMillis int64 `json:"databaseReadMillis"`
+	CloseMillis        int64 `json:"closeMillis"`
+}
+
+type settleDurations struct {
+	clusterRead, connect, databaseRead, close time.Duration
+}
+
+func (d *settleDurations) add(other settleDurations) {
+	d.clusterRead += other.clusterRead
+	d.connect += other.connect
+	d.databaseRead += other.databaseRead
+	d.close += other.close
+}
+
+func (d settleDurations) report(rep *SettleReport) {
+	rep.ClusterReadMillis = d.clusterRead.Milliseconds()
+	rep.ConnectMillis = d.connect.Milliseconds()
+	rep.DatabaseReadMillis = d.databaseRead.Milliseconds()
+	rep.CloseMillis = d.close.Milliseconds()
+	rep.ObservationMillis = (d.clusterRead + d.connect + d.databaseRead + d.close).Milliseconds()
 }
 
 // settleSample is one read of a promoted cluster.
 type settleSample struct {
 	healthy, inRecovery, pending bool
 	server                       time.Time // pg_postmaster_start_time; zero when not read
+	durations                    settleDurations
 }
 
 func (s settleSample) settled() bool { return s.healthy && !s.inRecovery && !s.pending }
@@ -690,11 +737,14 @@ func (e *Engine) waitSettled(ctx context.Context, c Cluster, dsn string, slot *D
 		*slot = nil
 	}
 	var rep SettleReport
+	var durations settleDurations
 	var server time.Time // postmaster start of the last read that had one
 	start, stable := time.Now(), 0
 	for {
 		rep.Polls++
 		s, err := e.observeSettled(ctx, c, dsn)
+		durations.add(s.durations)
+		durations.report(&rep)
 		if err == nil && !s.server.IsZero() {
 			if !server.IsZero() && !s.server.Equal(server) {
 				rep.Restarts++
@@ -736,18 +786,31 @@ func (e *Engine) waitSettled(ctx context.Context, c Cluster, dsn string, slot *D
 // read even when the Cluster is not healthy, so the report says which of them
 // held the settle back. err means the Cluster could not be read; a database
 // that cannot be reached leaves the sample unsettled with no server time.
-func (e *Engine) observeSettled(ctx context.Context, c Cluster, dsn string) (settleSample, error) {
-	var s settleSample
+func (e *Engine) observeSettled(ctx context.Context, c Cluster, dsn string) (s settleSample, err error) {
+	started := time.Now()
 	st, err := c.Get(ctx)
+	s.durations.clusterRead = time.Since(started)
 	if err != nil {
 		return s, err
 	}
 	s.healthy = st.Healthy()
+	started = time.Now()
 	db, err := e.connect(ctx, dsn)
+	s.durations.connect = time.Since(started)
 	if err != nil {
 		return s, err
 	}
-	defer db.Close()
+	defer func() {
+		started := time.Now()
+		db.Close()
+		s.durations.close = time.Since(started)
+	}()
+	queryStarted := time.Now()
+	defer func() { s.durations.databaseRead = time.Since(queryStarted) }()
+	if observer, ok := db.(settleObserver); ok {
+		s.inRecovery, s.pending, s.server, err = observer.SettleStatus(ctx)
+		return s, err
+	}
 	if s.inRecovery, err = db.InRecovery(ctx); err != nil {
 		return s, err
 	}

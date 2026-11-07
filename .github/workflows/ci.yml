@@ -1,0 +1,36 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Test
+        run: go test -race -timeout 5m ./...
+      - name: Vet
+        run: go vet -race ./...
+      - name: Build
+        run: go build ./...
+      # Existing integration tests need a real primary and streaming standby.
+      # The script supplies fixture DSNs and removes its disposable volumes.
+      # No cloud credentials, kubeconfig or production endpoints are used.
+      - name: PostgreSQL primary and standby integration
+        run: bash test/integration/run.sh -race -timeout 5m

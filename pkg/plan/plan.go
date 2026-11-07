@@ -23,6 +23,11 @@ type Plan struct {
 	Gateway    GatewaySpec `json:"gateway"`
 	Verify     VerifySpec  `json:"verify"`
 	Thresholds Thresholds  `json:"thresholds"`
+	// AllowSourceRewire opts an approved run into selecting the target as the
+	// current primary's future upstream, in prepare before writes are held.
+	// It never reparents the target or changes either cluster's primary role.
+	// Omitted/false preserves the strict prewired two-cluster topology.
+	AllowSourceRewire bool `json:"allowSourceRewire,omitempty"`
 	// Decommission configures the clean-up of the source after a successful
 	// migration (hopmigrate decommission). Optional.
 	Decommission *DecommissionSpec `json:"decommission,omitempty"`

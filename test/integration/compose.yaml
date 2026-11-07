@@ -4,7 +4,7 @@
 name: hopcharlie-it
 services:
   primary:
-    image: postgres:17-alpine
+    image: postgres:17.11-alpine
     environment:
       POSTGRES_PASSWORD: it
       POSTGRES_DB: shop
@@ -19,7 +19,7 @@ services:
       interval: 1s
       retries: 60
   standby:
-    image: postgres:17-alpine
+    image: postgres:17.11-alpine
     user: postgres
     depends_on:
       primary: { condition: service_healthy }

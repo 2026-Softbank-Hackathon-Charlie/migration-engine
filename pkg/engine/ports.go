@@ -27,6 +27,13 @@ type Cluster interface {
 	WaitFor(ctx context.Context, interval time.Duration, cond func(*cnpg.Status) bool) (*cnpg.Status, error)
 }
 
+// SourceRewirer is optional. Legacy adapters remain valid for strict plans;
+// an opted-in run that needs a source change refuses unsupported adapters.
+// Implementations must update only replica.source with identity/version CAS.
+type SourceRewirer interface {
+	RewireSource(ctx context.Context, expected *cnpg.Status, targetSelf string) error
+}
+
 // Database is a connection to one PostgreSQL primary or standby (*pg.DB).
 type Database interface {
 	InRecovery(ctx context.Context) (bool, error)
@@ -36,6 +43,14 @@ type Database interface {
 	WALPosition(ctx context.Context) (string, error)
 	LSNDiff(ctx context.Context, a, b string) (int64, error)
 	Close()
+}
+
+// settleObserver is an optional extension implemented by the PostgreSQL adapter.
+// Existing Database adapters keep the three-query observation path. An error
+// from the combined read remains unobserved; it must not fall back to another
+// read and turn an incomplete observation into apparent stability.
+type settleObserver interface {
+	SettleStatus(context.Context) (inRecovery, pendingRestart bool, postmasterStart time.Time, err error)
 }
 
 // Connector opens a Database for a DSN.

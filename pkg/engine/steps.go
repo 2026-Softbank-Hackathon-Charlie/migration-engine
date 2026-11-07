@@ -385,6 +385,7 @@ func (e *Engine) switchover(ctx context.Context) (map[string]any, error) {
 			return ev, errors.New("source final read-only WAL position is empty")
 		}
 		proof.FinalFenceLSN = finalLSN
+		proof.SourceReadOnlyConfirmed = true
 		if err = e.persistWriteFence(&proof); err != nil {
 			return ev, err
 		}

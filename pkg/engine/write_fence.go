@@ -216,13 +216,14 @@ func (f *sourceHBAFence) Restore(ctx context.Context, snapshot cnpg.HBASnapshot,
 // SourceWriteFenceState is persisted before the first external patch. The HBA
 // source text and any authentication options never enter run state or events.
 type SourceWriteFenceState struct {
-	Lease         string           `json:"lease"`
-	Source        cnpg.HBASnapshot `json:"source"`
-	WriterRoles   []string         `json:"writerRoles"`
-	Intent        bool             `json:"intent"`
-	Active        bool             `json:"active"`
-	Released      bool             `json:"released"`
-	FinalFenceLSN string           `json:"finalFenceLsn,omitempty"`
+	Lease                   string           `json:"lease"`
+	Source                  cnpg.HBASnapshot `json:"source"`
+	WriterRoles             []string         `json:"writerRoles"`
+	Intent                  bool             `json:"intent"`
+	Active                  bool             `json:"active"`   // source HBA admission only, not the final barrier
+	Released                bool             `json:"released"` // admission restored on confirmed replica; SQL remains read-only
+	SourceReadOnlyConfirmed bool             `json:"sourceReadOnlyConfirmed,omitempty"`
+	FinalFenceLSN           string           `json:"finalFenceLsn,omitempty"`
 }
 
 func (e *Engine) prepareSourceWriteFence(ctx context.Context) error {
@@ -341,7 +342,7 @@ func (e *Engine) acquireSourceWriteFence(ctx context.Context) (map[string]any, e
 	if err = e.persistWriteFence(&proof); err != nil {
 		return nil, err
 	}
-	return map[string]any{"writerRoles": slices.Clone(proof.WriterRoles), "terminatedClientSessions": n, "newConnectionsRejected": true}, nil
+	return map[string]any{"writerRoles": slices.Clone(proof.WriterRoles), "terminatedClientSessions": n, "newConnectionsRejected": true, "admissionOnly": true, "finalBarrier": "pending_source_demotion"}, nil
 }
 
 func (e *Engine) assertSourceWriteFence(ctx context.Context) error {

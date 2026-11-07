@@ -113,6 +113,18 @@ func TestSourceSQLFenceOrdersDrainBeforeMarkerAndRestoresOnlyReplica(t *testing.
 	if !e.State().SourceWriteFence.Released {
 		t.Fatal("fence release proof not persisted")
 	}
+	if !e.State().SourceWriteFence.SourceReadOnlyConfirmed {
+		t.Fatal("final source SQL read-only evidence was not persisted")
+	}
+}
+
+func TestSourceSQLFenceAdmissionIsNotReportedAsFinalReadOnlyBarrier(t *testing.T) {
+	_, e, _ := fencedHarness(t)
+	runThrough(t, e, StepSwitchover)
+	proof := e.State().SourceWriteFence
+	if !proof.Active || proof.Released || proof.SourceReadOnlyConfirmed || proof.FinalFenceLSN != "" {
+		t.Fatalf("admission snapshot falsely claimed a final SQL barrier: %+v", proof)
+	}
 }
 
 func TestSourceSQLFenceUnsupportedPrivilegeFailsBeforeHold(t *testing.T) {

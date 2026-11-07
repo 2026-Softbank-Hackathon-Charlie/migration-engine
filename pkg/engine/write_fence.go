@@ -34,6 +34,8 @@ type sourceFenceCluster interface {
 
 type sourceHBAFence struct {
 	cluster  sourceFenceCluster
+	target   Cluster
+	targetDB *pg.DB
 	pg       *pg.WriterFence
 	roles    []string
 	interval time.Duration
@@ -56,6 +58,16 @@ func (f *sourceHBAFence) Precheck(ctx context.Context, lease string) (cnpg.HBASn
 	}
 	if err = f.pg.VerifySystemIdentifier(ctx, snapshot.SystemIdentifier); err != nil {
 		return snapshot, err
+	}
+	target, err := f.target.Get(ctx)
+	if err != nil {
+		return snapshot, fmt.Errorf("source write fence requires an existing warm target: %w", err)
+	}
+	if !target.Healthy() || target.IsPrimary() || target.SystemIdentifier != snapshot.SystemIdentifier || target.UID == "" {
+		return snapshot, errors.New("warm target identity or replica health cannot be proven for source write fence")
+	}
+	if err = (&pg.WriterFence{DB: f.targetDB}).VerifySystemIdentifier(ctx, snapshot.SystemIdentifier); err != nil {
+		return snapshot, fmt.Errorf("target SQL identity: %w", err)
 	}
 	if err = f.cluster.DryRunWriteFence(ctx, snapshot, lease, f.roles); err != nil {
 		return snapshot, fmt.Errorf("source write fence admission capability: %w", err)
@@ -104,7 +116,7 @@ func (f *sourceHBAFence) ConfirmReadOnlySource(ctx context.Context, db Database,
 	if err != nil {
 		return "", err
 	}
-	if s.UID != snapshot.UID || s.SystemIdentifier != snapshot.SystemIdentifier || s.IsPrimary() || s.Instances != 1 {
+	if s.UID != snapshot.UID || s.SystemIdentifier != snapshot.SystemIdentifier || s.IsPrimary() || s.Instances != 1 || token == "" || s.DemotionToken != token {
 		return "", errors.New("source identity or topology is not the observed demoted cluster")
 	}
 	f.pg.DB = p
@@ -184,7 +196,15 @@ func (e *Engine) prepareSourceWriteFence(ctx context.Context) error {
 		if !ok {
 			return errors.New("source write fence requires a PostgreSQL observer")
 		}
-		e.writeFencer = &sourceHBAFence{cluster: cluster, pg: &pg.WriterFence{DB: p, DSN: e.plan.Source.DSN, Roles: e.plan.SourceWriteFence.WriterRoles}, roles: e.plan.SourceWriteFence.WriterRoles, interval: 50 * time.Millisecond}
+		target, err := e.targetDB(ctx)
+		if err != nil {
+			return err
+		}
+		tp, ok := target.(*pg.DB)
+		if !ok {
+			return errors.New("target SQL identity cannot be verified")
+		}
+		e.writeFencer = &sourceHBAFence{cluster: cluster, target: e.dst, targetDB: tp, pg: &pg.WriterFence{DB: p, DSN: e.plan.Source.DSN, Roles: e.plan.SourceWriteFence.WriterRoles}, roles: e.plan.SourceWriteFence.WriterRoles, interval: 50 * time.Millisecond}
 	}
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {

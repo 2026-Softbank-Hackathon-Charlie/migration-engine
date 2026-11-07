@@ -83,14 +83,15 @@ func TestSourceHBAWriteFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	observerConfig := srcConfig.Copy()
-	observerConfig.User, observerConfig.Password = "hop_fence_observer", "fixture-only"
-	observer, err := Connect(ctx, observerConfig.ConnString())
+	// pgx.Config.ConnString returns the original parsed string; mutating User
+	// on a copy does not serialize a new observer identity.
+	observerDSN := "postgres://hop_fence_observer:fixture-only@127.0.0.1:55432/shop?sslmode=disable"
+	observer, err := Connect(ctx, observerDSN)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer observer.Close()
-	fence := &WriterFence{DB: observer, DSN: observerConfig.ConnString(), Roles: []string{"hop_fence_writer"}}
+	fence := &WriterFence{DB: observer, DSN: observerDSN, Roles: []string{"hop_fence_writer"}}
 	if err = fence.CheckRoles(ctx); err == nil || !strings.Contains(err.Error(), "hop_fence_reader") {
 		t.Fatalf("INHERIT FALSE / SET TRUE writer login bypassed inventory: %v", err)
 	}

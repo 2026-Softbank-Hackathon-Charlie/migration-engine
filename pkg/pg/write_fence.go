@@ -80,12 +80,22 @@ func (f *WriterFence) CheckRoles(ctx context.Context) error {
 	}
 	var valid int
 	err = f.DB.Pool.QueryRow(ctx, `SELECT count(*) FROM pg_roles WHERE rolname=ANY($1)
-	 AND rolcanlogin AND NOT rolsuper AND NOT rolreplication`, f.Roles).Scan(&valid)
+	 AND rolcanlogin AND NOT rolsuper AND NOT rolreplication AND NOT rolcreaterole AND NOT rolcreatedb AND NOT rolbypassrls`, f.Roles).Scan(&valid)
 	if err != nil {
 		return err
 	}
 	if valid != len(f.Roles) {
 		return errors.New("write fence writer roles must all exist and be ordinary LOGIN roles")
+	}
+	var privileged int
+	err = f.DB.Pool.QueryRow(ctx, `SELECT count(*) FROM pg_roles login WHERE login.rolname=ANY($1) AND EXISTS (
+	 SELECT 1 FROM pg_roles r WHERE (r.oid=login.oid OR pg_has_role(login.oid,r.oid,'SET') OR pg_has_role(login.oid,r.oid,'USAGE'))
+	 AND (r.rolsuper OR r.rolreplication OR r.rolcreaterole OR r.rolcreatedb OR r.rolbypassrls))`, f.Roles).Scan(&privileged)
+	if err != nil {
+		return err
+	}
+	if privileged != 0 {
+		return errors.New("write fence refuses application logins that can assume privileged roles")
 	}
 	rows, err := f.DB.Pool.Query(ctx, potentialWritersSQL)
 	if err != nil {

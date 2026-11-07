@@ -73,7 +73,7 @@ func TestParseDefaultsAndExpand(t *testing.T) {
 	if p.Thresholds.SwitchoverTimeout.Duration != 2*time.Minute || p.Thresholds.MaxLagBytes != 16<<20 {
 		t.Errorf("threshold defaults: %+v", p.Thresholds)
 	}
-	if !*p.Verify.FenceGate || p.Verify.Schemas[0] != "public" {
+	if !*p.Verify.FenceGate || len(p.Verify.Schemas) != 0 {
 		t.Errorf("verify defaults: %+v", p.Verify)
 	}
 }

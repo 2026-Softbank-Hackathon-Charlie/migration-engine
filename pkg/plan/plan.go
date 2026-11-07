@@ -105,7 +105,7 @@ type GatewaySpec struct {
 
 // VerifySpec configures data verification.
 type VerifySpec struct {
-	Schemas []string `json:"schemas,omitempty"` // default ["public"]
+	Schemas []string `json:"schemas,omitempty"` // empty: every user schema (verify.ListTables)
 	Tables  []string `json:"tables,omitempty"`  // optional filter: "schema.table" or "table"
 	// FenceGate compares per-table count+hash while writes are held, before the
 	// target is promoted. A mismatch triggers an automatic rollback.
@@ -209,9 +209,6 @@ func (p *Plan) applyDefaults() {
 	}
 	if p.Gateway.TargetBackend == "" {
 		p.Gateway.TargetBackend = p.Target.Env
-	}
-	if len(p.Verify.Schemas) == 0 {
-		p.Verify.Schemas = []string{"public"}
 	}
 	if p.Verify.FenceGate == nil {
 		t := true

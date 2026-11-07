@@ -35,7 +35,10 @@ func (t Table) String() string { return t.Schema + "." + t.Name }
 func (t Table) Ident() string { return pgx.Identifier{t.Schema, t.Name}.Sanitize() }
 
 // ListTables lists ordinary and partitioned (root) tables in schemas.
-// filter, when non-empty, keeps only "schema.table" or bare "table" names.
+// Empty schemas means every user schema: all but the system schemas
+// (pg_catalog, information_schema, pg_toast*, pg_temp*) and schemas an
+// extension owns. filter, when non-empty, keeps only "schema.table" or bare
+// "table" names.
 func ListTables(ctx context.Context, db *pgxpool.Pool, schemas, filter []string) ([]Table, error) {
 	rows, err := db.Query(ctx, `
 SELECT n.nspname::text, c.relname::text,
@@ -45,7 +48,13 @@ SELECT n.nspname::text, c.relname::text,
     JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum
     WHERE i.indrelid = c.oid AND i.indisprimary), '{}'::text[])
 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-WHERE c.relkind IN ('r','p') AND NOT c.relispartition AND n.nspname = ANY($1)
+WHERE c.relkind IN ('r','p') AND NOT c.relispartition AND CASE
+  WHEN cardinality($1::text[]) > 0 THEN n.nspname = ANY($1)
+  ELSE n.nspname <> 'information_schema' AND n.nspname !~ '^pg_'
+    AND NOT EXISTS (SELECT 1 FROM pg_depend d
+      WHERE d.classid = 'pg_namespace'::regclass AND d.objid = n.oid
+        AND d.refclassid = 'pg_extension'::regclass AND d.deptype = 'e')
+  END
 ORDER BY 1, 2`, schemas)
 	if err != nil {
 		return nil, err

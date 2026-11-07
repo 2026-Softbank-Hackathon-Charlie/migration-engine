@@ -32,6 +32,18 @@ ko() { kubectl --kubeconfig "$onprem" -n hop "$@"; }
 bin="$work/hopmigrate.exe"
 
 cleanup() {
+  local fixture_status=$?
+  if [ "$fixture_status" != 0 ] && [ "${SOURCE_WRITE_FENCE_REHEARSAL:-}" = 1 ]; then
+    # Fixture-only diagnostics, never Secret objects or connection strings.
+    for c in cloud onprem; do
+      kcfg="$work/$c.kubeconfig"
+      [ -f "$kcfg" ] || continue
+      kubectl --kubeconfig "$kcfg" -n hop get clusters -o 'custom-columns=NAME:.metadata.name,PHASE:.status.phase,READY:.status.readyInstances,SYSTEM:.status.systemID' || true
+      kubectl --kubeconfig "$kcfg" -n hop get pods || true
+      kubectl --kubeconfig "$kcfg" -n cnpg-system logs deploy/cnpg-controller-manager --tail=40 || true
+      kubectl --kubeconfig "$kcfg" -n hop logs -l cnpg.io/podRole=instance -c postgres --tail=40 --max-log-requests=2 || true
+    done
+  fi
   [ -n "${KEEP:-}" ] || { kind delete cluster --name hopcloud >/dev/null 2>&1 || true; kind delete cluster --name hoponprem >/dev/null 2>&1 || true; }
 }
 trap cleanup EXIT

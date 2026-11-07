@@ -15,6 +15,8 @@ Existing plans remain unchanged. The first supported boundary is a dedicated app
 
 Before holding traffic, inventory all LOGIN identities and the roles they can SET or inherit, including NOLOGIN roles. Undeclared schema/table/column/sequence/owner or SECURITY DEFINER authority blocks execution. The observer must have no application write authority. Prepared transactions, active administrator clients, unsupported background writers, shared databases/roles, maintenance databases, absent metadata privileges, and unavailable admission dry-run all block execution.
 
+Pin distinct source/target SQL TLS leaf fingerprints while preserving existing TLS verification. Reject plaintext fallbacks and shared certificates: a physical replica shares the system identifier, so it is not enough to identify the observed source after reconnect. Every observer reconnect and authentication probe must retain the peer pin; certificate rotation fails closed. Persist only the public certificate hash.
+
 Persist intent, a random lease, source UID/system identifier and original user-HBA hash before external mutation. Original HBA text may contain LDAP credentials and must never enter state or evidence. The gateway must acknowledge a durable source-specific exclusion and zero source in-flight reads; it must exclude normal selection, retries, fallbacks and health probes. Read weights and global read counts do not prove that property.
 
 CAS-patch only the source CNPG user-HBA prefix and hopcharlie.dev/write-fence-lease annotation. Deny every declared LOGIN over IPv4 and IPv6, attest a fresh explicit PostgreSQL HBA rejection (password/TLS/socket failures are not proof), and terminate old sessions including open transactions. These are early admission/drain measures. Source HBA is not WAL replicated, so new target readers remain admitted.
@@ -28,6 +30,8 @@ A privileged administrator, Unix peer/local root in the DB Pod, CNPG fixed reser
 ## Verification and activation dependencies
 
 The disposable PostgreSQL fixture exercises explicit new-connection rejection, rollback of old direct and SET ROLE writers, a writer with only INSERT on pgdata.hidden, target read admission, and original HBA restoration. Unit tests cover lease/UID/hash conflicts, intent persistence, restart halt, missing gateway capability and compensation order. They do not prove real CNPG demotion/restart/promotion behavior. A disposable CNPG 1.30.1 kind rehearsal must additionally prove source SQL availability before target promotion and the shutdown-checkpoint/replay ordering. Until that passes, keep the PR draft and the opt-in inactive.
+
+Production also needs exclusive per-app/target ownership across concurrent migration controllers; the source-only lease by itself does not establish target ownership or constrain another controller that ignores it. This remains a release blocker.
 
 Production also needs a narrowly scoped admission/RBAC companion for owned HBA/lease patches and Argo CD preservation of only these temporary fields. They are not delivered or applied by this engine PR. Existing production policy should reject its preflight. No production SQL, roles, secrets, policies, clusters or migrations were changed.
 

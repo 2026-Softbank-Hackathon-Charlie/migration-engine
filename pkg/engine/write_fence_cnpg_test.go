@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,18 +19,21 @@ import (
 
 	"github.com/2026-Softbank-Hackathon-Charlie/migration-engine/pkg/plan"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgproto3"
 )
 
 // Discard all trace payloads, including auth data. Only the protocol event is
 // observed; no trace content is retained or printed.
-type fixtureAuthenticationTrace struct {
+type fixtureAdmissionTrace struct {
 	ready chan struct{}
 	once  sync.Once
 }
 
-func (v *fixtureAuthenticationTrace) Write(p []byte) (int, error) {
-	if bytes.Contains(p, []byte("AuthenticationOk")) {
+func (v *fixtureAdmissionTrace) Write(p []byte) (int, error) {
+	// SCRAM continuation is flushed after HBA selection. AuthenticationOk is
+	// buffered until ReadyForQuery, so observing it cannot attest this window.
+	if bytes.Contains(p, []byte("AuthenticationSASLContinue")) {
 		v.once.Do(func() { close(v.ready) })
 	}
 	return len(p), nil
@@ -84,17 +88,18 @@ func TestSourceWriteFenceCNPGShutdownCheckpoint(t *testing.T) {
 			held = true
 			once.Do(func() {
 				go func() {
-					// This client's post_auth_delay=3 makes an authenticating backend
+					// This client's post_auth_delay=10 makes an authenticating backend
 					// invisible to the earlier pg_stat_activity session snapshot.
 					config, e := pgx.ParseConfig(writerDSN)
 					if e != nil {
 						lateResult <- e
 						return
 					}
-					config.RuntimeParams["options"] = "-c post_auth_delay=3"
+					config.RuntimeParams["options"] = "-c post_auth_delay=10"
+					trace := &fixtureAdmissionTrace{ready: authenticated}
 					config.BuildFrontend = func(r io.Reader, w io.Writer) *pgproto3.Frontend {
 						frontend := pgproto3.NewFrontend(r, w)
-						frontend.Trace(&fixtureAuthenticationTrace{ready: authenticated}, pgproto3.TracerOptions{SuppressTimestamps: true})
+						frontend.Trace(trace, pgproto3.TracerOptions{SuppressTimestamps: true})
 						return frontend
 					}
 					c, e := pgx.ConnectConfig(ctx, config)
@@ -107,7 +112,7 @@ func TestSourceWriteFenceCNPGShutdownCheckpoint(t *testing.T) {
 				select {
 				case <-authenticated:
 				case <-time.After(2 * time.Second):
-					http.Error(w, "late client never completed authentication before HBA fencing", 503)
+					http.Error(w, "late client never passed original HBA selection before fencing", 503)
 					return
 				}
 				observer, e := pgx.Connect(ctx, observerDSN)
@@ -119,10 +124,10 @@ func TestSourceWriteFenceCNPGShutdownCheckpoint(t *testing.T) {
 				e = observer.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND usename='app' AND backend_type='client backend'`).Scan(&visible)
 				_ = observer.Close(ctx)
 				if e != nil || visible != 1 {
-					http.Error(w, "authenticated late client was not hidden from the source-drain snapshot", 503)
+					http.Error(w, "startup client was not hidden from the source-drain snapshot", 503)
 					return
 				}
-				t.Log("late SQL client authenticated but is absent from the source writer snapshot")
+				t.Log("late SQL client passed original HBA selection but is absent from the source writer snapshot")
 			})
 		case "/v1/reads/exclude", "/v1/reads/include":
 			var body struct{ Backend, Lease string }
@@ -181,6 +186,11 @@ func TestSourceWriteFenceCNPGShutdownCheckpoint(t *testing.T) {
 			t.Fatalf("real CNPG step %s: %v; state=%+v", step, err, e.State())
 		}
 		if step == StepFence {
+			select {
+			case lateErr := <-lateResult:
+				t.Fatalf("startup client finished before the provisional marker; race was not reproduced: %v", lateErr)
+			default:
+			}
 			if err = tx.Commit(ctx); err == nil {
 				t.Fatal("direct SQL transaction committed through source admission/drain")
 			}
@@ -202,6 +212,10 @@ func TestSourceWriteFenceCNPGShutdownCheckpoint(t *testing.T) {
 	}
 	select {
 	case lateErr := <-lateResult:
+		var pgError *pgconn.PgError
+		if errors.As(lateErr, &pgError) && pgError.Code != "57P01" && pgError.Code != "57P02" && pgError.Code != "57P03" && pgError.Code != "25006" {
+			t.Fatalf("late startup fixture failed for an unrelated SQL error: %v", lateErr)
+		}
 		// Either the shutdown terminated this startup backend, or its commit
 		// preceded shutdown and MUST be included in the final target contents.
 		target, e := pgx.Connect(ctx, targetDSN)
